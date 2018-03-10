@@ -117,6 +117,7 @@ proc = ImageProcessor(
         th_roc = ((20,230,100), (30,256,230)), # don't know yet
         th_deg = 3.0,
         th_rng = 6.0,
+        th_ang = np.deg2rad(75),
         hsv=True
         )
 
