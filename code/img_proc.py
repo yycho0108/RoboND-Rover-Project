@@ -226,7 +226,7 @@ class ImageProcessor(object):
             c = cnt[0][:,0] # --> (N,2) 
             seg = []
             for pt in c:
-                if not map_obs[pt[1], pt[0]]:
+                if not map_obs[pt[1], pt[0]] > 10:
                     if seg:
                         segs.append(np.int32(seg))
                     seg = []
@@ -281,7 +281,9 @@ class ImageProcessor(object):
                 goal = tuple(np.int_(goal))
 
                 # global planner ...
-                mo = cv2.erode(map_obs, cv2.getStructuringElement(cv2.MORPH_ERODE, (3,3)), iterations=1)
+                #mo = cv2.erode(map_obs, cv2.getStructuringElement(cv2.MORPH_ERODE, (3,3)), iterations=1)
+                # dilate to avoid too-close paths??
+                mo = np.greater(map_obs, 20)
                 #mo = np.logical_not(cv2.greater(map_nav, 20))
                 astar = AStar(mo, (tx,ty), goal)
                 _, path = astar()
@@ -322,8 +324,8 @@ class ImageProcessor(object):
         # Threshold
         nav, (wx, wy), (r,a) = self.convert(warped, self._th_nav, yaw, tx, ty, mw, mh, polar=True)
         if update_map:
-            map[wy, wx, 2] = np.clip(map[wy,wx,2]+1, 0, 255)
-            map[wy, wx, 0] = np.clip(map[wy,wx,0]-1, 0, 255)
+            map[wy, wx, 2] = np.clip(map[wy,wx,2]+10, 0, 255)
+            map[wy, wx, 0] = np.clip(map[wy,wx,0]-10, 0, 255)
 
         obs, (wx, wy) = self.convert(warped, self._th_obs, yaw, tx, ty, mw, mh, polar=False)
         if update_map:

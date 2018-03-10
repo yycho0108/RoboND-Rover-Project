@@ -63,7 +63,9 @@ class AStar2DGrid(object):
 
         # di,dj
         self._delta = [[-1,0], [0,-1], [1,0], [0,1]]
-        self._dviz = ['^', '<', 'v', '>']
+        # add diagonal options
+        self._delta.extend([[-1,-1], [-1,1], [1,-1], [1,1]])
+        self._dviz = ['^', '<', 'v', '>', '\\' ,'/', '\\', '/']
 
         self._grid = grid # occupancy grid
         self._n, self._m = np.shape(grid)

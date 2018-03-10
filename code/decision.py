@@ -29,13 +29,17 @@ class Planner(object):
         nav_a = nav_a[valid_idx]
 
         # apply
+        front_idx = aand(nav_a > -2*atol, nav_a < 2*atol)
+        nav_r_front = nav_r[front_idx]
+        nav_a_front = nav_a[front_idx]
+
         good_idx = aand(nav_a > da_r-atol, nav_a < da_r+atol)
         nav_r_good = nav_r[good_idx]
         nav_a_good = nav_a[good_idx]
 
         print 'Good : {}'.format(len(nav_r_good))
 
-        path_blocked = len(nav_r_good) < 20
+        path_blocked = len(nav_r_front) < 20
 
         if path_blocked:
             print 'block!'
