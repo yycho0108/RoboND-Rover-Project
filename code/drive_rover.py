@@ -1,3 +1,5 @@
+#!/usr/bin/python2
+
 # Do the necessary imports
 import argparse
 import shutil

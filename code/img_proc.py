@@ -88,7 +88,8 @@ class ImageProcessor(object):
 
     def _cvt_polar(self, px, py):
         # Rover --> Polar
-        r = np.sqrt(px**2+py**2)
+        r = np.sqrt(np.square(px)+np.square(py))
+        r /= self._scale
         h = np.arctan2(py,px)
         return r, h
 
@@ -122,7 +123,7 @@ class ImageProcessor(object):
     def range_filter(self, px, py):
         r, a = self._cvt_polar(px, py)
         aa = np.abs(a)
-        good = np.logical_and(r<=self._th_rng*self._scale, aa<=self._th_ang)
+        good = np.logical_and(r<=self._th_rng, aa<=self._th_ang)
         return px[good], py[good]
 
     def convert(self, img, thresh, yaw, tx, ty, mw, mh, polar=False, skip_thresh=False):
@@ -155,21 +156,28 @@ class ImageProcessor(object):
 
         # find best endpoint to explore
         m = len(cnt)
-
         goals = []
         goal = None
 
-        for i in range(m):
-            mn = 30.0 #3m
-            for j in range(i+1,m):
-                ci = np.expand_dims([cnt[i][0], cnt[i][-1]], 1) # 2, 1, 2
-                cj = np.expand_dims([cnt[j][0], cnt[j][-1]], 0) # 1, 2, 2
-                dc = np.linalg.norm(ci-cj, axis=-1) # 2, 2, 2 -> 2,2
-                mi, mj = np.unravel_index(dc.argmin(), dc.shape)
-                if dc[mi,mj] < mn:
-                    mn = dc[mi,mj]
-                    goal = (ci[mi,0] + cj[0,mj]) / 2.0
-                    goals.append(goal)
+        if m == 1:
+            # only one contour
+            i=j=0
+            goal = (cnt[0][0] + cnt[0][-1]) / 2.0
+            goals.append(goal)
+        else:
+            for i in range(m):
+                mn = 30.0 #3m
+                for j in range(i+1,m):
+                    ci = np.expand_dims([cnt[i][0], cnt[i][-1]], 1) # 2, 1, 2
+                    cj = np.expand_dims([cnt[j][0], cnt[j][-1]], 0) # 1, 2, 2
+                    dc = np.linalg.norm(ci-cj, axis=-1) # 2, 2, 2 -> 2,2
+                    mi, mj = np.unravel_index(dc.argmin(), dc.shape)
+                    if dc[mi,mj] < mn:
+                        mn = dc[mi,mj]
+                        goal = (ci[mi,0] + cj[0,mj]) / 2.0
+                        goals.append(goal)
+
+        
         return cnt, goals
         
     def __call__(self, rover):
@@ -202,7 +210,6 @@ class ImageProcessor(object):
         #map_nav_out = cv2.dilate(map[:,:,2], np.ones([3,3]), iterations=1)
         #bound = np.logical_and(map_nav_out, map_obs)
 
-
         map_nav = map[:,:,2]
         map_obs = map[:,:,0]
         ker = cv2.getStructuringElement(cv2.MORPH_DILATE, (3,3))
@@ -216,9 +223,9 @@ class ImageProcessor(object):
 
         segs = []
         if len(cnt) > 0:
-            cnt = cnt[0][:,0] # --> (N,2) 
+            c = cnt[0][:,0] # --> (N,2) 
             seg = []
-            for pt in cnt:
+            for pt in c:
                 if not map_obs[pt[1], pt[0]]:
                     if seg:
                         segs.append(np.int32(seg))
@@ -238,8 +245,11 @@ class ImageProcessor(object):
         bound = (np.logical_and(
             np.greater(map_nav, 20),
             np.greater(map_obs, 20)) * 255).astype(np.uint8)
+        bound = cv2.cvtColor(bound, cv2.COLOR_GRAY2BGR)
+        for i in range(len(cnt)):
+            cv2.drawContours(bound, cnt, i, np.random.randint(255, size=3), 1)
 
-
+        #bound = cv2.erode(bound, cv2.getStructuringElement(cv2.MORPH_ERODE, (3,3)), iterations=1)
 
         #cnt, goals = self.find_goal(map, bound)
         cnt, goals = self.find_goal(segs)
@@ -265,13 +275,15 @@ class ImageProcessor(object):
         if rover.mode != 'goal':
             # find next goal!
             if goal is not None:
-                print [cv2.arcLength(c,False) for c in cnt if cv2.arcLength(c, False)]
+                #print [cv2.arcLength(c,False) for c in cnt if cv2.arcLength(c, False)]
                 #Compute Path ...
                 print 'init - goal', (tx, ty, goal)
                 goal = tuple(np.int_(goal))
 
                 # global planner ...
-                astar = AStar(map[:,:,0], (tx,ty), goal)
+                mo = cv2.erode(map_obs, cv2.getStructuringElement(cv2.MORPH_ERODE, (3,3)), iterations=1)
+                #mo = np.logical_not(cv2.greater(map_nav, 20))
+                astar = AStar(mo, (tx,ty), goal)
                 _, path = astar()
                 if path is not None:
                     path = cv2.approxPolyDP(path, 3.0, closed=False)[:,0,:]
@@ -295,7 +307,7 @@ class ImageProcessor(object):
                 cv2.line(cimg, (x0,y0), (x1,y1), (1,0,0), 2)
 
         for i, c in enumerate(segs):
-            print np.shape(c)
+            #print np.shape(c)
             cv2.polylines(cimg, c[np.newaxis, ...], False, color=np.random.uniform(size=3), thickness=1)
 
         cv2.imshow('bound', np.flipud(bound))
@@ -326,6 +338,11 @@ class ImageProcessor(object):
         stat[nav,2] = 255
         stat[:, 1 ] = 0
         stat[obs,0] = 255
+
+        #rover.local_map = self._cvt_rover(
+
+        for rad in range(10):
+            cv2.circle(stat, (w/2,h), rad*10, (255,255,255), 1)
 
         thresh = np.zeros_like(img)
         thresh[:, :, 2] = 255*self._threshold(
