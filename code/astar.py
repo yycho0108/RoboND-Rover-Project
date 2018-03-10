@@ -104,7 +104,7 @@ class AStar2DGrid(object):
             j = j - self._delta[a][1]
             self._viz[i][j] = self._dviz[a]
         self._path.reverse()
-        return self._viz, self._path
+        return self._viz, np.int32(self._path)
 
 def main():
     grid = [[0, 1, 0, 0, 0, 0],

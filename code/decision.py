@@ -11,6 +11,40 @@ def decision_step(Rover):
 
     # Example:
     # Check if we have vision data to make decisions with
+
+    if Rover.mode == 'goal':
+        if len(Rover.path) <= 0:
+            Rover.mode = 'stop'
+            return Rover
+        target = Rover.path[0]
+        (dx, dy) = np.subtract(target, Rover.pos)
+        target_yaw = np.rad2deg(np.arctan2(dy, dx))
+        print 'tp | p', target, Rover.pos
+        print 'ty | y', target_yaw, Rover.yaw
+        target_dist = np.linalg.norm([dx,dy])
+        if target_dist < 3.0: #+-3.0m
+            Rover.path = Rover.path[1:]
+            return Rover
+        delta_yaw = (target_yaw - Rover.yaw)
+        delta_yaw = (delta_yaw+540)%360 - 180 # +-180
+        print delta_yaw
+        if np.abs(delta_yaw) > 5.0:
+            # turn first
+            Rover.throttle = 0.0
+            if Rover.vel > 0.2:
+                Rover.brake = Rover.brake_set
+            else:
+                Rover.brake = 0
+            Rover.steer = np.clip(delta_yaw, -15, 15)
+        else:
+            Rover.brake = 0.0
+            # turn done
+            if Rover.vel < Rover.max_vel:
+                # Set throttle value to throttle setting
+                Rover.throttle = Rover.throttle_set
+        # follow path ...
+        return Rover
+
     if Rover.nav_angles is not None:
         # Check for Rover.mode status
         if Rover.mode == 'forward': 

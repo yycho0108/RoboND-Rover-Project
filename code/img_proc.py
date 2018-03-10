@@ -1,6 +1,7 @@
 import cv2
 import numpy as np
 from astar import EDist, AStar2DGrid as AStar
+import sys
 
 def last_nonzero(mask, axis, invalid_val=-1):
     val = mask.shape[axis] - np.flip(mask, axis=axis).argmax(axis=axis) - 1
@@ -45,12 +46,11 @@ def cproc(cnt):
     if n <= 2:
         return cnt
     n2 = n/2 # 1
-    print 'n', n
     c1 = cnt[:n2]
     c2 = cnt[-n2:]
     #c2 = np.flip(cnt[-n2:], axis=0)
     diffs = np.linalg.norm(np.subtract(c1,c2), axis=-1)
-    print diffs
+    #print diffs
     m = np.argmax(diffs)
 
     cnt = np.roll(cnt, -m, axis=0)
@@ -75,6 +75,7 @@ class ImageProcessor(object):
         self._th_rng = th_rng
         self._th_ang = th_ang
         self._hsv = hsv # flag to convert to hsv
+        self._first = True
         
     def _cvt_rover(self, pi, pj, h, w):
         # pixel --> Rover
@@ -141,17 +142,8 @@ class ImageProcessor(object):
 
         return sel, (wx,wy)
 
-    def find_goal(self, map):
-        # Frontier
-        map_obs = map[:,:,0]
-        map_nav = cv2.dilate(map[:,:,2], np.ones([5,5]), iterations=1)
-        #map_nav_out = cv2.dilate(map[:,:,2], np.ones([3,3]), iterations=1)
-        #bound = np.logical_and(map_nav_out, map_obs)
-        bound = (np.logical_and(map_nav, map_obs) * 255).astype(np.uint8)
-        #bound = skeleton(bound)
-        #print np.shape(bound)
-
-        _, cnt, _ = cv2.findContours((bound*255).astype(np.uint8), cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+    def find_goal(self, bound):
+        _, cnt, _ = cv2.findContours(bound.copy(), cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
 
         cnt  = [cproc(c) for c in cnt]
         # filter contours by length
@@ -159,22 +151,30 @@ class ImageProcessor(object):
 
         # find best endpoint to explore
         m = len(cnt)
-        mn = np.inf
+
+        goals = []
         goal = None
-        
+
         for i in range(m):
+            mn = 30.0 #3m
             for j in range(i+1,m):
                 ci = np.expand_dims([cnt[i][0], cnt[i][-1]], 1) # 2, 1, 2
                 cj = np.expand_dims([cnt[j][0], cnt[j][-1]], 0) # 1, 2, 2
                 dc = np.linalg.norm(ci-cj, axis=-1) # 2, 2, 2 -> 2,2
-                mi, mj = np.unravel_index(dc.argmax(), dc.shape)
+                mi, mj = np.unravel_index(dc.argmin(), dc.shape)
                 if dc[mi,mj] < mn:
                     mn = dc[mi,mj]
                     goal = (ci[mi,0] + cj[0,mj]) / 2.0
-        return bound, cnt, goal
+                    goals.append(goal)
+        return cnt, goals
         
     def __call__(self, rover):
         """ Assume RGB Image Input """
+
+        if self._first:
+            self._first = False
+            rover.goal = None
+            rover.path = None
 
         # Unpack Data
         img = rover.img
@@ -191,26 +191,62 @@ class ImageProcessor(object):
 
         h, w = img.shape[:2]
         mh, mw = map.shape[:2]
-        
-        bound, cnt, goal = self.find_goal(map)
+
+        # Frontier
+        map_obs = map[:,:,0]
+        map_nav = cv2.dilate(map[:,:,2], np.ones([5,5]), iterations=1)
+        #map_nav_out = cv2.dilate(map[:,:,2], np.ones([3,3]), iterations=1)
+        #bound = np.logical_and(map_nav_out, map_obs)
+
+        bound = (np.logical_and(
+            np.greater(map_nav, 20),
+            np.greater(map_obs, 20)) * 255).astype(np.uint8)
+        cnt, goals = self.find_goal(bound)
+        goal = None
+        if len(goals) > 0:
+            if rover.goal:
+                # use previous goal to determine next goal
+                ref = rover.goal
+            else:
+                ref = rover.pos
+                
+            gdists = np.linalg.norm(np.subtract(goals, ref), axis=-1)
+            # at least 1m apart ...
+            #far_idx = (gdists < 1.0) # --> [False]
+            #if np.sum(far_idx) > 0:
+            #    gdists = gdists[far_idx]
+            #    goals = [goals[int(i)] for i in np.where(far_idx)]
+            gidx = np.argmin(gdists)
+            goal = goals[gidx]
+
         path = None
+        if rover.mode != 'goal':
+            # find next goal!
+            if goal is not None:
+                print [cv2.arcLength(c,False) for c in cnt if cv2.arcLength(c, False)]
+                #Compute Path ...
+                print 'init - goal', (tx, ty, goal)
+                goal = tuple(np.int_(goal))
 
-        if goal is not None:
-            goal = tuple(np.int_(goal))
-            #astar = AStar(map[:,:,0], (tx,ty), goal)
-            #_, path = astar()
+                # global planner ...
+                astar = AStar(map[:,:,0], (tx,ty), goal)
+                _, path = astar()
+                if path is not None:
+                    path = cv2.approxPolyDP(path, 3.0, closed=False)[:,0,:]
+                    rover.goal = goal
+                    rover.path = path
+                    rover.mode = 'goal'
+                else:
+                    rover.goal = None
+                    print 'No Path Found!'
 
-        print (tx, ty, goal)
-        rover.goal = goal
-
+        # visualization ...
         cimg = np.zeros((mh,mw,3), dtype=np.float32)
-
-        if goal is not None:
-            cv2.circle(cimg, tuple(np.int_([tx,ty])), 2, [0.0, 1.0, 0.0])
-            cv2.circle(cimg, tuple(np.int_(goal)), 2, [0.0,0.0,1.0])
-
-        if path is not None:
-            for (p0, p1) in zip(path[:-1], path[1:]):
+        if rover.goal is not None:
+            cv2.circle(cimg, tuple(np.int_(rover.pos)), 2, [0.0, 1.0, 0.0])
+            cv2.circle(cimg, tuple(np.int_(rover.goal)), 2, [0.0,0.0,1.0])
+        if rover.path is not None:
+            for (p0, p1) in zip(rover.path[:-1], rover.path[1:]):
                 x0,y0 = p0
                 x1,y1 = p1
                 #cv2.line( (y0,x0), (y1,x1), (128)
@@ -279,7 +315,7 @@ class ImageProcessor(object):
         pi, pj = np.where(sel)
         px, py = self._cvt_rover(pi, pj, h, w)
         r, a = self._cvt_polar(px, py)
-        print np.min(a), np.max(a)
+        #print np.min(a), np.max(a)
         px, py = self.range_filter(px, py)
         pi, pj = np.int32(self._inv_rover(px, py, h, w))
         sel[pi, pj] = 0
