@@ -142,12 +142,16 @@ class ImageProcessor(object):
 
         return sel, (wx,wy)
 
-    def find_goal(self, bound):
-        _, cnt, _ = cv2.findContours(bound.copy(), cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+    def find_goal(self, segs):
+        #map_obs = map[:,:,0]
+        #map_nav = map[:,:,2]
+        #_, cnt, _ = cv2.findContours(map_nav.copy(), cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
 
-        cnt  = [cproc(c) for c in cnt]
+        #_, cnt, _ = cv2.findContours(bound.copy(), cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+        #cnt  = [cproc(c) for c in cnt]
         # filter contours by length
-        cnt = [c for c in cnt if cv2.arcLength(c, False) > 5.0]
+        #cnt = [c for c in cnt if cv2.arcLength(c, False) > 5.0]
+        cnt = segs
 
         # find best endpoint to explore
         m = len(cnt)
@@ -193,15 +197,53 @@ class ImageProcessor(object):
         mh, mw = map.shape[:2]
 
         # Frontier
-        map_obs = map[:,:,0]
-        map_nav = cv2.dilate(map[:,:,2], np.ones([5,5]), iterations=1)
+        #map_obs = map[:,:,0]
+        #map_nav = cv2.dilate(map[:,:,2], np.ones([5,5]), iterations=1)
         #map_nav_out = cv2.dilate(map[:,:,2], np.ones([3,3]), iterations=1)
         #bound = np.logical_and(map_nav_out, map_obs)
+
+
+        map_nav = map[:,:,2]
+        map_obs = map[:,:,0]
+        ker = cv2.getStructuringElement(cv2.MORPH_DILATE, (3,3))
+        map_nav = cv2.dilate(map_nav, ker, iterations=1)
+        map_obs = cv2.dilate(map_obs, ker, iterations=1)
+
+        _, cnt, _ = cv2.findContours(
+                (255* np.greater(map_nav, 20)).astype(np.uint8),
+                cv2.RETR_EXTERNAL,
+                cv2.CHAIN_APPROX_SIMPLE)
+
+        segs = []
+        if len(cnt) > 0:
+            cnt = cnt[0][:,0] # --> (N,2) 
+            seg = []
+            for pt in cnt:
+                if not map_obs[pt[1], pt[0]]:
+                    if seg:
+                        segs.append(np.int32(seg))
+                    seg = []
+                else:
+                    seg.append([pt[0], pt[1]])
+
+        #map_cnt = np.zeros_like(map_obs, dtype=np.uint8)
+        #cv2.drawContours(map_cnt, cnt, -1, 255)
+        #np.logical_and(map_cnt, np.greater(map_obs, 20), map_cnt)
+        #cv2.imshow('mcnt', np.float32(map_cnt))
+        #_, cnt, _ = cv2.findContours(
+        #        (255* np.greater(map_cnt, 20)).astype(np.uint8),
+        #        cv2.RETR_EXTERNAL,
+        #        cv2.CHAIN_APPROX_SIMPLE)
 
         bound = (np.logical_and(
             np.greater(map_nav, 20),
             np.greater(map_obs, 20)) * 255).astype(np.uint8)
-        cnt, goals = self.find_goal(bound)
+
+
+
+        #cnt, goals = self.find_goal(map, bound)
+        cnt, goals = self.find_goal(segs)
+        #goals = []
         goal = None
         if len(goals) > 0:
             if rover.goal:
@@ -252,7 +294,8 @@ class ImageProcessor(object):
                 #cv2.line( (y0,x0), (y1,x1), (128)
                 cv2.line(cimg, (x0,y0), (x1,y1), (1,0,0), 2)
 
-        for i, c in enumerate(cnt):
+        for i, c in enumerate(segs):
+            print np.shape(c)
             cv2.polylines(cimg, c[np.newaxis, ...], False, color=np.random.uniform(size=3), thickness=1)
 
         cv2.imshow('bound', np.flipud(bound))

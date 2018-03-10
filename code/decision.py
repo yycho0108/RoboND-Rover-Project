@@ -28,7 +28,7 @@ def decision_step(Rover):
         delta_yaw = (target_yaw - Rover.yaw)
         delta_yaw = (delta_yaw+540)%360 - 180 # +-180
         print delta_yaw
-        if np.abs(delta_yaw) > 5.0:
+        if np.abs(delta_yaw) > 10.0:
             # turn first
             Rover.throttle = 0.0
             if Rover.vel > 0.2:
