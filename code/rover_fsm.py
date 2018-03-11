@@ -118,12 +118,16 @@ class RoverFSM(object):
             _, path = astar()
             # simplify path
             if path is None:
+                # TODO : 
+                # if (realized_cannot_get_to_target) then
+                #   ask_for_new_target()
                 # No Path! Abort
                 # TODO : Fix
                 rover.goal = None
                 return 'swerve', {}
             else:
                 path = cv2.approxPolyDP(path, 3.0, closed=False)[:,0,:]
+                # TODO : makesure poly approximation doesn't cross obstacles
                 self._info['moveto_global_path'] = path
                 self._info['moveto_local_phase'] = 'turn'
 
@@ -139,6 +143,10 @@ class RoverFSM(object):
         #    astar = AStar(mo, (tx,ty), goal)
         #    _, path = astar()
         #    self._info['moveto_local_path'] = path
+
+        # TODO : 
+        # if (realized_cannot_get_to_point) then
+        #   ask_for_new_global_plan()
 
         if len(path) == 0:
             self._info['moveto_global_path'] = []
@@ -170,6 +178,10 @@ class RoverFSM(object):
             steer = np.clip(np.rad2deg(da / 2.0), -15.0, 15.0)
             self.move(steer=steer)
             # TODO : check stuck-ness here
+
+        if self._info['nomove_cnt'] > 120:
+            # stuck-ish. ask for a new plan!
+            return 'moveto_local', {'path' : [], 'phase' : 'turn'}
 
         return 'moveto_local', {'path' : path, 'phase' : phase}
 
