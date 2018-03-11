@@ -3,42 +3,15 @@ import numpy as np
 from astar import EDist, AStar2DGrid as AStar
 import sys
 
-def last_nonzero(mask, axis, invalid_val=-1):
-    val = mask.shape[axis] - np.flip(mask, axis=axis).argmax(axis=axis) - 1
-    return np.where(mask.any(axis=axis), val, invalid_val)
-
-def ptrans(pts, M, w=0, h=0):
-    n = len(pts)
-    pts = np.concatenate((pts, np.ones((n,1))), axis=-1)
-    
-    pp = M.dot(pts.T)
-    pp[:2] /= pp[2]
-    res = pp[:2].T
-
-    a = np.logical_and
-    res = np.int32(np.round(res))
-
-    if w>0 and h>0:
-        i_good = a(
-                a(0 <= res[:,0], res[:,0] < w),
-                a(0 <= res[:,1], res[:,1] < h)
-                )
-        return res[i_good, ::-1]
-    return res[:, ::-1]
-
-def skeleton(img, ker=cv2.getStructuringElement(cv2.MORPH_CROSS, (3,3))):
-    size = np.size(img)
-    skel = np.zeros_like(img, dtype=np.uint8)
-    while True:
-        eroded = cv2.erode(img, ker)
-        temp = cv2.dilate(eroded ,ker)
-        temp = cv2.subtract(img, temp)
-        skel = cv2.bitwise_or(skel, temp)
-        img = eroded.copy()
-        if cv2.countNonZero(img) == 0:
-            return skel
+from utils import normalize_angle
 
 def score_frontier(tx, ty, yaw, fx, fy):
+    """
+    Rank Candidate Frontier Points.
+    Currently, it chooses the one that is easiest to get to.
+    (Minimum Distance & Angle)
+    """
+
     dy = fy - ty
     dx = fx - tx
 
@@ -55,8 +28,13 @@ def score_frontier(tx, ty, yaw, fx, fy):
 
     return fx[fidx], fy[fidx]
 
-
 def cproc(cnt):
+    """
+    For simple closed-contours that are 
+    omposed of nearly parallel lines,
+    cproc() will roll the contour such tha
+    its geometric extremes will be located at the ends.
+    """
     cnt = np.squeeze(cnt, axis=1)
     cnt = np.roll(cnt, np.random.randint(256), axis=0)
 
@@ -78,12 +56,28 @@ def cproc(cnt):
     #return np.mean([c1,c2], axis=0).astype(np.int32)
 
 class ImageProcessor(object):
+    """
+    Bulk of Image-processing pipeline.
+    Contains coordinate-conversion utility functions,
+    as well as most of image-processing functions used in the project.
+    """
     def __init__(self, 
                  src, dst, scale,
                  th_nav, th_obs, th_roc,
                  th_deg, th_rng, th_ang,
                  hsv=True
                 ):
+        """
+        Parameters:
+            src, dst : defines points for perspective transformation.
+            th_nav : Color threshold for Navigable terrain; hsv if hsv=True.
+            th_obs : Color threshold for Obstacle terrain; hsv if hsv=True.
+            th_roc : Color threshold for Rocks; hsv if hsv=True.
+            th_deg : Yaw/Roll threshold for updating maps.
+            th_rng : View Range threshold for updating maps.
+            th_ang : View Angle threshold for updating maps
+            hsv : Flag; whether or not color coordinates are hsv. default=True
+        """
         self._M = cv2.getPerspectiveTransform(src, dst)
         self._scale = scale
         self._th_nav = th_nav
@@ -96,28 +90,30 @@ class ImageProcessor(object):
         self._first = True
         
     def _cvt_rover(self, pi, pj, h, w):
-        # pixel --> Rover
+        """ Pixel -> Rover """
         px, py = float(h)-pi, float(w/2.0)-pj
         return px, py
 
     def _inv_rover(self, px, py, h, w):
+        """ Rover -> Pixel """
         pi, pj = float(h)-px, float(w/2.0)-py
         return pi, pj
 
     def _cvt_polar(self, px, py):
-        # Rover --> Polar
+        """ Rover -> Polar """
         r = np.sqrt(np.square(px)+np.square(py))
         r /= self._scale
         h = np.arctan2(py,px)
         return r, h
 
     def _inv_polar(self, r, h):
+        """ Polar -> Rover """
         x = r * np.cos(h)
         y = r * np.sin(h)
         return x, y
     
     def _cvt_world(self, px, py, yaw, tx, ty, mw, mh):
-        # Rover --> World
+        """ Rover -> World """
         #yaw = np.deg2rad(yaw)
         c, s = np.cos(yaw), np.sin(yaw)
         rmat = np.reshape([c,-s,s,c], (2,2))
@@ -128,23 +124,28 @@ class ImageProcessor(object):
         return wx, wy
 
     def _threshold(self, img, thresh):
-        #sel = np.logical_and(
-        #        np.sum(thresh[0]<=img, axis=2)==3,
-        #        np.sum(img<thresh[1],  axis=2)==3
-        #        )
-        ##return sel
-        #print 'ss0', sel.shape
-        #print 'ssd', sel.dtype
+        """
+        Applies color threshold to img.
+        Parameters:
+            img : image to apply color transform
+            thresh : (low, high) with each same depth as image.
+        """
         sel = cv2.inRange(img, thresh[0], thresh[1]).astype(np.bool)
         return sel
 
     def range_filter(self, px, py):
+        """
+        Filter observations by range to limit junk information.
+        """
         r, a = self._cvt_polar(px, py)
         aa = np.abs(a)
         good = np.logical_and(r<=self._th_rng, aa<=self._th_ang)
         return px[good], py[good]
 
     def convert(self, img, thresh, yaw, tx, ty, mw, mh, polar=False, skip_thresh=False):
+        """
+        Apply most of necessary conversions automatically.
+        """
         h, w = img.shape[:2]
         if skip_thresh:
             sel = img
@@ -160,48 +161,13 @@ class ImageProcessor(object):
             return sel, (wx,wy), (r,a)
 
         return sel, (wx,wy)
-
-    def find_goal(self, segs):
-        #map_obs = map[:,:,0]
-        #map_nav = map[:,:,2]
-        #_, cnt, _ = cv2.findContours(map_nav.copy(), cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-
-        #_, cnt, _ = cv2.findContours(bound.copy(), cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-        #cnt  = [cproc(c) for c in cnt]
-        # filter contours by length
-        #cnt = [c for c in cnt if cv2.arcLength(c, False) > 5.0]
-        cnt = segs
-
-        # find best endpoint to explore
-        m = len(cnt)
-        goals = []
-        goal = None
-
-        if m == 1:
-            # only one contour
-            i=j=0
-            goal = (cnt[0][0] + cnt[0][-1]) / 2.0
-            goals.append(goal)
-        else:
-            for i in range(m):
-                mn = 30.0 #3m
-                for j in range(i+1,m):
-                    ci = np.expand_dims([cnt[i][0], cnt[i][-1]], 1) # 2, 1, 2
-                    cj = np.expand_dims([cnt[j][0], cnt[j][-1]], 0) # 1, 2, 2
-                    dc = np.linalg.norm(ci-cj, axis=-1) # 2, 2, 2 -> 2,2
-                    mi, mj = np.unravel_index(dc.argmin(), dc.shape)
-                    if dc[mi,mj] < mn:
-                        mn = dc[mi,mj]
-                        goal = (ci[mi,0] + cj[0,mj]) / 2.0
-                        goals.append(goal)
-
-        
-        return cnt, goals
-        
+       
     def __call__(self, rover):
         """ Assume RGB Image Input """
 
         if self._first:
+            # initialize.
+            # TODO : fix more properly
             self._first = False
             rover.goal = None
             rover.p0 = None
@@ -212,12 +178,10 @@ class ImageProcessor(object):
         img = rover.img
         tx, ty = rover.pos
         yaw, pitch, roll = [np.deg2rad(e) for e in rover.yaw, rover.pitch, rover.roll]
-        if pitch > np.pi:
-            pitch -= 2*np.pi
-        if roll > np.pi:
-            roll -= 2*np.pi
+        yaw, pitch, roll = [normalize_angle(e) for e in [yaw,pitch,roll]] #to +-np.pi
         map, map_gt = rover.worldmap, rover.ground_truth
 
+        # decide whether or not data is good in general
         update_map = abs(pitch) < np.deg2rad(self._th_deg) and \
                 abs(roll) < np.deg2rad(self._th_deg)
 
@@ -225,11 +189,6 @@ class ImageProcessor(object):
         mh, mw = map.shape[:2]
 
         # Frontier
-        #map_obs = map[:,:,0]
-        #map_nav = cv2.dilate(map[:,:,2], np.ones([5,5]), iterations=1)
-        #map_nav_out = cv2.dilate(map[:,:,2], np.ones([3,3]), iterations=1)
-        #bound = np.logical_and(map_nav_out, map_obs)
-
         map_nav = map[:,:,2]
         map_obs = map[:,:,0]
         ker = cv2.getStructuringElement(cv2.MORPH_DILATE, (3,3))
@@ -262,59 +221,15 @@ class ImageProcessor(object):
             if np.size(fy) > 0:
                 goal = score_frontier(tx, ty, yaw, fx, fy)
 
-            #dy = fy - ty
-            #dx = fx - tx
-            #fdist = np.sqrt(np.square(fy-ty) + np.square(fx-tx))
-
-            #if np.size(fdist) > 0:
-            #    fidx = np.argmin(fdist)
-            #    #print 'cur {} -> nxt {}'.format( (tx,ty), (fx[fidx], fy[fidx]) )
-            #    goal = (fx[fidx], fy[fidx])
-
-            #cv2.imshow('frontier', np.flipud(frontier))
-
-        #_, cnt, _ = cv2.findContours(
-        #        (255* np.greater(map_nav, 20)).astype(np.uint8),
-        #        cv2.RETR_EXTERNAL,
-        #        cv2.CHAIN_APPROX_SIMPLE)
-
-        #map_nav = cv2.dilate(map_nav, ker, iterations=1)
-        #map_obs = cv2.dilate(map_obs, ker, iterations=1)
-
-        #segs = []
-        #if len(cnt) > 0:
-        #    c = cnt[0][:,0] # --> (N,2) 
-        #    seg = []
-        #    for pt in c:
-        #        if not map_obs[pt[1], pt[0]] > 10:
-        #            if seg:
-        #                segs.append(np.int32(seg))
-        #            seg = []
-        #        else:
-        #            seg.append([pt[0], pt[1]])
-
-        #map_cnt = np.zeros_like(map_obs, dtype=np.uint8)
-        #cv2.drawContours(map_cnt, cnt, -1, 255)
-        #np.logical_and(map_cnt, np.greater(map_obs, 20), map_cnt)
-        #cv2.imshow('mcnt', np.float32(map_cnt))
-        #_, cnt, _ = cv2.findContours(
-        #        (255* np.greater(map_cnt, 20)).astype(np.uint8),
-        #        cv2.RETR_EXTERNAL,
-        #        cv2.CHAIN_APPROX_SIMPLE)
-
-
-        bound = (np.logical_and(
+        cimg = (np.logical_and(
             np.greater(map_nav, 20),
             np.greater(map_obs, 20)) * 255).astype(np.uint8)
-        bound = cv2.cvtColor(bound, cv2.COLOR_GRAY2BGR)
-        #for i in range(len(cnt)):
-        #    cv2.drawContours(bound, cnt, i, np.random.randint(255, size=3), 1)
+        cimg = cv2.cvtColor(cimg, cv2.COLOR_GRAY2BGR)
 
         rover.next_goal = goal
 
         # visualization ...
         #cimg = np.zeros((mh,mw,3), dtype=np.float32)
-        cimg = np.copy(bound)
         if rover.goal is not None:
             cv2.circle(cimg, tuple(np.int_(rover.pos)), 2, [0.0, 255, 0.0])
             cv2.circle(cimg, tuple(np.int_(rover.goal)), 2, [0.0,0.0,255])
@@ -332,11 +247,6 @@ class ImageProcessor(object):
                 #cv2.line( (y0,x0), (y1,x1), (128)
                 cv2.line(cimg, (x0,y0), (x1,y1), (255,255,0), 1)
 
-        #for i, c in enumerate(segs):
-        #    #print np.shape(c)
-        #    cv2.polylines(cimg, c[np.newaxis, ...], False, color=np.random.uniform(size=3), thickness=1)
-
-        #cv2.imshow('bound', np.flipud(bound))
         cv2.imshow('cimg', np.flipud(cimg))
         cv2.waitKey(10)
 
