@@ -11,8 +11,6 @@ class RoverFSM(object):
         self._info = {
                 'nomove_cnt' : 0,
                 'stuck_cnt' : 0,
-                'moveto_global_path' : [],
-                'moveto_local_phase' : 'turn'
                 }
         self._smap = {
                 'moveto' : self.moveto,
@@ -108,32 +106,28 @@ class RoverFSM(object):
     def moveto_global(self, target):
         # compute ...
         rover = self._rover
-        if len(self._info['moveto_global_path']) <= 0:
-            map_obs = np.greater(self._rover.worldmap[:,:,0], 2)
-            #map_obs = cv2.dilate(map_obs.astype(np.uint8), cv2.getStructuringElement(cv2.MORPH_DILATE, (3,3)))
-            #map_obs = map_obs.astype(np.bool)
-            src = tuple(np.int32(rover.pos))
-            dst = tuple(np.int32(target))
-            astar = AStar(map_obs, src, dst)
-            _, path = astar()
-            # simplify path
-            if path is None:
-                # TODO : 
-                # if (realized_cannot_get_to_target) then
-                #   ask_for_new_target()
-                # No Path! Abort
-                # TODO : Fix
-                rover.goal = None
-                return 'swerve', {}
-            else:
-                path = cv2.approxPolyDP(path, 3.0, closed=False)[:,0,:]
-                # TODO : makesure poly approximation doesn't cross obstacles
-                self._info['moveto_global_path'] = path
-                self._info['moveto_local_phase'] = 'turn'
 
-        return 'moveto_local', {'path':self._info['moveto_global_path'], 'phase' : 'turn'}
+        map_obs = np.greater(self._rover.worldmap[:,:,0], 2)
+        #map_obs = cv2.dilate(map_obs.astype(np.uint8), cv2.getStructuringElement(cv2.MORPH_DILATE, (3,3)))
+        #map_obs = map_obs.astype(np.bool)
+        src = tuple(np.int32(rover.pos))
+        dst = tuple(np.int32(target))
+        astar = AStar(map_obs, src, dst)
+        _, path = astar()
+        # simplify path
+        if path is None:
+            # TODO : 
+            # if (realized_cannot_get_to_target) then
+            #   ask_for_new_target()
+            # No Path! Abort
+            # TODO : Fix
+            rover.goal = None
+            return 'swerve', {}
+        else:
+            path = cv2.approxPolyDP(path, 3.0, closed=False)[:,0,:]
+            # TODO : makesure poly approximation doesn't cross obstacles
 
-
+        return 'moveto_local', {'path' : path, 'phase' : 'turn'}
 
     def moveto_local(self, path=None, phase='turn'):
         rover = self._rover
@@ -149,7 +143,6 @@ class RoverFSM(object):
         #   ask_for_new_global_plan()
 
         if len(path) == 0:
-            self._info['moveto_global_path'] = []
             # TODO : fix this when done
             # completed goal!
             rover.goal = None
@@ -177,6 +170,7 @@ class RoverFSM(object):
             # turn less responsively
             steer = np.clip(np.rad2deg(da / 2.0), -15.0, 15.0)
             self.move(steer=steer)
+            return 'unstuck', {'prv' : 'moveto_local', 'pargs' : {'path' : path, 'phase' : 'forward'}}
             # TODO : check stuck-ness here
 
         if self._info['nomove_cnt'] > 120:

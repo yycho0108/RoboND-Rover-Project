@@ -38,6 +38,24 @@ def skeleton(img, ker=cv2.getStructuringElement(cv2.MORPH_CROSS, (3,3))):
         if cv2.countNonZero(img) == 0:
             return skel
 
+def score_frontier(tx, ty, yaw, fx, fy):
+    dy = fy - ty
+    dx = fx - tx
+
+    # score 1 : distance from self ( better if small )
+    fdist = np.sqrt(np.square(dy) + np.square(dx))
+
+    # score 2 : angle from self : ( better if small )
+    fang = np.arctan2(dy, dx) - yaw
+    fang = (fang+np.pi)%np.pi-np.pi # normalize to +-pi
+    fang = np.abs(fang)
+
+    fscore = fdist * fang
+    fidx = np.argmin(fscore)
+
+    return fx[fidx], fy[fidx]
+
+
 def cproc(cnt):
     cnt = np.squeeze(cnt, axis=1)
     cnt = np.roll(cnt, np.random.randint(256), axis=0)
@@ -234,15 +252,22 @@ class ImageProcessor(object):
             
             fy, fx = frontier.nonzero() #(2,N)
 
+            # basic filter : no obstacles!
             good_goal = (map_obs[fy,fx] <= 1)
             fy = fy[good_goal]
             fx = fx[good_goal]
 
-            fdist = np.sqrt(np.square(fy-ty) + np.square(fx-tx))
-            if np.size(fdist) > 0:
-                fidx = np.argmin(fdist)
-                #print 'cur {} -> nxt {}'.format( (tx,ty), (fx[fidx], fy[fidx]) )
-                goal = (fx[fidx], fy[fidx])
+            if np.size(fy) > 0:
+                goal = score_frontier(tx, ty, yaw, fx, fy)
+
+            #dy = fy - ty
+            #dx = fx - tx
+            #fdist = np.sqrt(np.square(fy-ty) + np.square(fx-tx))
+
+            #if np.size(fdist) > 0:
+            #    fidx = np.argmin(fdist)
+            #    #print 'cur {} -> nxt {}'.format( (tx,ty), (fx[fidx], fy[fidx]) )
+            #    goal = (fx[fidx], fy[fidx])
 
             #cv2.imshow('frontier', np.flipud(frontier))
 
