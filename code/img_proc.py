@@ -213,25 +213,54 @@ class ImageProcessor(object):
         map_nav = map[:,:,2]
         map_obs = map[:,:,0]
         ker = cv2.getStructuringElement(cv2.MORPH_DILATE, (3,3))
-        map_nav = cv2.dilate(map_nav, ker, iterations=1)
-        map_obs = cv2.dilate(map_obs, ker, iterations=1)
 
-        _, cnt, _ = cv2.findContours(
-                (255* np.greater(map_nav, 20)).astype(np.uint8),
-                cv2.RETR_EXTERNAL,
-                cv2.CHAIN_APPROX_SIMPLE)
+        mapped = np.logical_or(
+                np.greater(map_nav, 20),
+                np.greater(map_obs, 2),
+                )
+        mapped = 255 * mapped.astype(np.uint8)
+        mapped = cv2.erode(mapped, cv2.getStructuringElement(cv2.MORPH_ERODE, (3,3)), iterations=1)
 
-        segs = []
+        cv2.imshow('mapped', np.flipud(mapped))
+
+        cnt = cv2.findContours(mapped.copy(), cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)[1]
+        mapped.fill(0)
+        goal = None
         if len(cnt) > 0:
-            c = cnt[0][:,0] # --> (N,2) 
-            seg = []
-            for pt in c:
-                if not map_obs[pt[1], pt[0]] > 10:
-                    if seg:
-                        segs.append(np.int32(seg))
-                    seg = []
-                else:
-                    seg.append([pt[0], pt[1]])
+            map_nav = cv2.dilate(map_nav, ker, iterations=1)
+            cv2.drawContours(mapped, cnt, -1, 255)
+            frontier = np.logical_and(map_nav, mapped)
+            frontier = 255 * frontier.astype(np.uint8)
+            
+            fy, fx = frontier.nonzero() #(2,N)
+
+            fdist = np.sqrt(np.square(fy-ty) + np.square(fx-tx))
+            if np.size(fdist) > 0:
+                fidx = np.argmin(fdist)
+                #print 'cur {} -> nxt {}'.format( (tx,ty), (fx[fidx], fy[fidx]) )
+                goal = (fx[fidx], fy[fidx])
+
+            #cv2.imshow('frontier', np.flipud(frontier))
+
+        #_, cnt, _ = cv2.findContours(
+        #        (255* np.greater(map_nav, 20)).astype(np.uint8),
+        #        cv2.RETR_EXTERNAL,
+        #        cv2.CHAIN_APPROX_SIMPLE)
+
+        #map_nav = cv2.dilate(map_nav, ker, iterations=1)
+        #map_obs = cv2.dilate(map_obs, ker, iterations=1)
+
+        #segs = []
+        #if len(cnt) > 0:
+        #    c = cnt[0][:,0] # --> (N,2) 
+        #    seg = []
+        #    for pt in c:
+        #        if not map_obs[pt[1], pt[0]] > 10:
+        #            if seg:
+        #                segs.append(np.int32(seg))
+        #            seg = []
+        #        else:
+        #            seg.append([pt[0], pt[1]])
 
         #map_cnt = np.zeros_like(map_obs, dtype=np.uint8)
         #cv2.drawContours(map_cnt, cnt, -1, 255)
@@ -241,6 +270,7 @@ class ImageProcessor(object):
         #        (255* np.greater(map_cnt, 20)).astype(np.uint8),
         #        cv2.RETR_EXTERNAL,
         #        cv2.CHAIN_APPROX_SIMPLE)
+
 
         bound = (np.logical_and(
             np.greater(map_nav, 20),
@@ -252,49 +282,54 @@ class ImageProcessor(object):
         #bound = cv2.erode(bound, cv2.getStructuringElement(cv2.MORPH_ERODE, (3,3)), iterations=1)
 
         #cnt, goals = self.find_goal(map, bound)
-        cnt, goals = self.find_goal(segs)
+        #cnt, goals = self.find_goal(segs)
+
+        #cnt = []
         #goals = []
-        goal = None
-        if len(goals) > 0:
-            if rover.goal:
-                # use previous goal to determine next goal
-                ref = rover.goal
-            else:
-                ref = rover.pos
-                
-            gdists = np.linalg.norm(np.subtract(goals, ref), axis=-1)
-            # at least 1m apart ...
-            #far_idx = (gdists < 1.0) # --> [False]
-            #if np.sum(far_idx) > 0:
-            #    gdists = gdists[far_idx]
-            #    goals = [goals[int(i)] for i in np.where(far_idx)]
-            gidx = np.argmin(gdists)
-            goal = goals[gidx]
 
-        path = None
-        if rover.mode != 'goal':
-            # find next goal!
-            if goal is not None:
-                #print [cv2.arcLength(c,False) for c in cnt if cv2.arcLength(c, False)]
-                #Compute Path ...
-                print 'init - goal', (tx, ty, goal)
-                goal = tuple(np.int_(goal))
+        #goals = []
+        #goal = None
+        #if len(goals) > 0:
+        #    if rover.goal:
+        #        # use previous goal to determine next goal
+        #        ref = rover.goal
+        #    else:
+        #        ref = rover.pos
+        #        
+        #    gdists = np.linalg.norm(np.subtract(goals, ref), axis=-1)
+        #    # at least 1m apart ...
+        #    #far_idx = (gdists < 1.0) # --> [False]
+        #    #if np.sum(far_idx) > 0:
+        #    #    gdists = gdists[far_idx]
+        #    #    goals = [goals[int(i)] for i in np.where(far_idx)]
+        #    gidx = np.argmin(gdists)
+        #    goal = goals[gidx]
 
-                # global planner ...
-                #mo = cv2.erode(map_obs, cv2.getStructuringElement(cv2.MORPH_ERODE, (3,3)), iterations=1)
-                # dilate to avoid too-close paths??
-                mo = np.greater(map_obs, 20)
-                #mo = np.logical_not(cv2.greater(map_nav, 20))
-                astar = AStar(mo, (tx,ty), goal)
-                _, path = astar()
-                if path is not None:
-                    path = cv2.approxPolyDP(path, 3.0, closed=False)[:,0,:]
-                    rover.goal = goal
-                    rover.path = path
-                    rover.mode = 'goal'
-                else:
-                    rover.goal = None
-                    print 'No Path Found!'
+        rover.goal = goal
+        #path = None
+        #if rover.mode != 'goal':
+        #    # find next goal!
+        #    if goal is not None:
+        #        #print [cv2.arcLength(c,False) for c in cnt if cv2.arcLength(c, False)]
+        #        #Compute Path ...
+        #        print 'init - goal', (tx, ty, goal)
+        #        goal = tuple(np.int_(goal))
+
+        #        # global planner ...
+        #        #mo = cv2.erode(map_obs, cv2.getStructuringElement(cv2.MORPH_ERODE, (3,3)), iterations=1)
+        #        # dilate to avoid too-close paths??
+        #        mo = np.greater(map_obs, 20)
+        #        #mo = np.logical_not(cv2.greater(map_nav, 20))
+        #        astar = AStar(mo, (tx,ty), goal)
+        #        _, path = astar()
+        #        if path is not None:
+        #            path = cv2.approxPolyDP(path, 3.0, closed=False)[:,0,:]
+        #            rover.goal = goal
+        #            rover.path = path
+        #            rover.mode = 'goal'
+        #        else:
+        #            rover.goal = None
+        #            print 'No Path Found!'
 
         # visualization ...
         cimg = np.zeros((mh,mw,3), dtype=np.float32)
@@ -308,9 +343,9 @@ class ImageProcessor(object):
                 #cv2.line( (y0,x0), (y1,x1), (128)
                 cv2.line(cimg, (x0,y0), (x1,y1), (1,0,0), 2)
 
-        for i, c in enumerate(segs):
-            #print np.shape(c)
-            cv2.polylines(cimg, c[np.newaxis, ...], False, color=np.random.uniform(size=3), thickness=1)
+        #for i, c in enumerate(segs):
+        #    #print np.shape(c)
+        #    cv2.polylines(cimg, c[np.newaxis, ...], False, color=np.random.uniform(size=3), thickness=1)
 
         cv2.imshow('bound', np.flipud(bound))
         cv2.imshow('cimg', np.flipud(cimg))
@@ -329,8 +364,8 @@ class ImageProcessor(object):
 
         obs, (wx, wy) = self.convert(warped, self._th_obs, yaw, tx, ty, mw, mh, polar=False)
         if update_map:
-            map[wy, wx, 0] = np.clip(map[wy,wx,0]+1, 0, 255)
-            map[wy, wx, 2] = np.clip(map[wy,wx,2]-1, 0, 255)
+            map[wy, wx, 0] = np.clip(map[wy,wx,0]+5, 0, 255)
+            map[wy, wx, 2] = np.clip(map[wy,wx,2]-5, 0, 255)
 
         roc, (wx, wy) = self.convert(warped, self._th_roc, yaw, tx, ty, mw, mh, polar=False)
         if update_map:
