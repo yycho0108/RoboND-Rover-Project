@@ -41,6 +41,23 @@ class LDist(object):
             res += abs(e0-e1)
         return res
 
+class GDist(object):
+    grid = None
+    def __init__(self, x1, o, scale):
+        x1 = np.reshape(x1, [1,1,2]) # given as i,j.
+        n, m = np.shape(o)[:2]
+        if GDist.grid is None:
+            GDist.grid = np.stack(
+                    np.meshgrid(range(n), range(m), indexing='ij'),
+                    axis=-1
+                    )
+        self._h = np.linalg.norm(GDist.grid - x1, axis=-1)
+        self._h += (o * scale)
+
+    def __call__(self, x0):
+        i,j = x0
+        return self._h[i,j]
+
 class AStar2DGrid(object):
     def __init__(self, grid, init, goal, h=None, order='xy'):
         self._grid = grid
@@ -54,7 +71,7 @@ class AStar2DGrid(object):
             self._goal = self._goal[::-1]
 
         if h is None:
-            h = EDist(goal)
+            h = EDist(self._goal)
 
         self._q = AStarQueue(h)
         self._q.add(self._init, 0)
@@ -64,8 +81,8 @@ class AStar2DGrid(object):
         # di,dj
         self._delta = [[-1,0], [0,-1], [1,0], [0,1]]
         # add diagonal options
-        self._delta.extend([[-1,-1], [-1,1], [1,-1], [1,1]])
-        self._dviz = ['^', '<', 'v', '>', '\\' ,'/', '\\', '/']
+        #self._delta.extend([[-1,-1], [-1,1], [1,-1], [1,1]])
+        self._dviz = ['^', '<', 'v', '>']#, '\\' ,'/', '\\', '/']
 
         self._grid = grid # occupancy grid
         self._n, self._m = np.shape(grid)
@@ -76,8 +93,8 @@ class AStar2DGrid(object):
     def valid(self, i, j):
         return (i >= 0 and j >= 0 and
                 i < self._n and j < self._m and
-                self._grid[i][j] == 0 and
-                self._check[i][j] == 0)
+                self._grid[i][j] < 1 and
+                self._check[i][j] < 1)
 
     def __call__(self):
         while True:
@@ -109,13 +126,13 @@ class AStar2DGrid(object):
         return self._viz, np.int32(self._path)
 
 def main():
-    grid = [[0, 1, 0, 0, 0, 0],
-            [0, 1, 0, 1, 0, 0],
+    grid = [[0, 0, 0, 0, 0, 0],
+            [0, 0, 0, 1, 0, 0],
             [0, 0, 0, 1, 0, 1],
-            [1, 0, 1, 1, 0, 0],
+            [0, 0, 1, 1, 0, 0],
             [0, 0, 0, 0, 1, 0]]
     h = LDist((4,5))
-    astar = AStar2DGrid(grid, (0,0), (4,5), h)
+    astar = AStar2DGrid(grid, (0,0), (4,5), h, order='ij')
 
     print astar()
 

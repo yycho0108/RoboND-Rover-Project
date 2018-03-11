@@ -94,36 +94,39 @@ def perspect_transform(img, src, dst):
 #    [1, 1],
 #    [-1, 1], 
 #    ])
-h,w = 160, 320
-scale = 10
 #offset = 3
 #dst = np.add(scale*dst, (w/2.0,h-scale/2-offset)).astype(np.float32)
 
-dst_size = scale/2
-bottom_offset = 6
-src = np.float32([[14, 140], [301 ,140],[200, 96], [118, 96]])
-dst = np.float32([[w/2 - dst_size, h - bottom_offset],
-                  [w/2 + dst_size, h - bottom_offset],
-                  [w/2 + dst_size, h - 2*dst_size - bottom_offset], 
-                  [w/2 - dst_size, h - 2*dst_size - bottom_offset],
-                  ])
 
-proc = ImageProcessor(
-        src=src,
-        dst=dst,
-        scale=scale,
-        th_nav = ((0,0,180), (50,50,256)),
-        th_obs = ((0,0,1), (35,256,90)),
-        th_roc = ((20,230,100), (30,256,230)), # don't know yet
-        th_deg = 1.0,
-        th_rng = 6.0,
-        th_ang = np.deg2rad(75),
-        hsv=True
-        )
-
+proc = None
 def perception_step(Rover):
-    # 3) Apply color threshold to identify navigable terrain/obstacles/rock samples
+    global proc
+    if proc is None:
+        h, w = np.shape(Rover.img)[:2]
+        scale = 10.
+        dst_size = scale / 2
+        bottom_offset = 6
+        src = np.float32([[14, 140], [301 ,140],[200, 96], [118, 96]])
+        dst = np.float32([[w/2 - dst_size, h - bottom_offset],
+                          [w/2 + dst_size, h - bottom_offset],
+                          [w/2 + dst_size, h - 2*dst_size - bottom_offset], 
+                          [w/2 - dst_size, h - 2*dst_size - bottom_offset],
+                          ])
 
+        proc = ImageProcessor(
+                src=src,
+                dst=dst,
+                scale=scale,
+                th_nav = ((0,0,180), (50,50,256)),
+                th_obs = ((0,0,1), (35,256,90)),
+                th_roc = ((20,230,100), (30,256,230)), # don't know yet
+                th_deg = 1.0,
+                th_rng = 8.0,
+                th_ang = np.deg2rad(75),
+                hsv=True
+                )
+
+    # 3) Apply color threshold to identify navigable terrain/obstacles/rock samples
     # proc automatically updates Rover.worldmap
     viz, (r,a) = proc(Rover)
     # r,a = polar-coord representation of navigable terrain

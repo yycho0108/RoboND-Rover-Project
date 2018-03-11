@@ -47,7 +47,7 @@ def score_frontier(tx, ty, yaw, fx, fy):
 
     # score 2 : angle from self : ( better if small )
     fang = np.arctan2(dy, dx) - yaw
-    fang = (fang+np.pi)%np.pi-np.pi # normalize to +-pi
+    fang = (fang + np.pi)%(2*np.pi)-np.pi # normalize to +-pi
     fang = np.abs(fang)
 
     fscore = fdist * fang
@@ -204,6 +204,8 @@ class ImageProcessor(object):
         if self._first:
             self._first = False
             rover.goal = None
+            rover.p0 = None
+            rover.next_goal = None
             rover.path = None
 
         # Unpack Data
@@ -305,78 +307,36 @@ class ImageProcessor(object):
             np.greater(map_nav, 20),
             np.greater(map_obs, 20)) * 255).astype(np.uint8)
         bound = cv2.cvtColor(bound, cv2.COLOR_GRAY2BGR)
-        for i in range(len(cnt)):
-            cv2.drawContours(bound, cnt, i, np.random.randint(255, size=3), 1)
+        #for i in range(len(cnt)):
+        #    cv2.drawContours(bound, cnt, i, np.random.randint(255, size=3), 1)
 
-        #bound = cv2.erode(bound, cv2.getStructuringElement(cv2.MORPH_ERODE, (3,3)), iterations=1)
-
-        #cnt, goals = self.find_goal(map, bound)
-        #cnt, goals = self.find_goal(segs)
-
-        #cnt = []
-        #goals = []
-
-        #goals = []
-        #goal = None
-        #if len(goals) > 0:
-        #    if rover.goal:
-        #        # use previous goal to determine next goal
-        #        ref = rover.goal
-        #    else:
-        #        ref = rover.pos
-        #        
-        #    gdists = np.linalg.norm(np.subtract(goals, ref), axis=-1)
-        #    # at least 1m apart ...
-        #    #far_idx = (gdists < 1.0) # --> [False]
-        #    #if np.sum(far_idx) > 0:
-        #    #    gdists = gdists[far_idx]
-        #    #    goals = [goals[int(i)] for i in np.where(far_idx)]
-        #    gidx = np.argmin(gdists)
-        #    goal = goals[gidx]
-
-        rover.goal = goal
-        #path = None
-        #if rover.mode != 'goal':
-        #    # find next goal!
-        #    if goal is not None:
-        #        #print [cv2.arcLength(c,False) for c in cnt if cv2.arcLength(c, False)]
-        #        #Compute Path ...
-        #        print 'init - goal', (tx, ty, goal)
-        #        goal = tuple(np.int_(goal))
-
-        #        # global planner ...
-        #        #mo = cv2.erode(map_obs, cv2.getStructuringElement(cv2.MORPH_ERODE, (3,3)), iterations=1)
-        #        # dilate to avoid too-close paths??
-        #        mo = np.greater(map_obs, 20)
-        #        #mo = np.logical_not(cv2.greater(map_nav, 20))
-        #        astar = AStar(mo, (tx,ty), goal)
-        #        _, path = astar()
-        #        if path is not None:
-        #            path = cv2.approxPolyDP(path, 3.0, closed=False)[:,0,:]
-        #            rover.goal = goal
-        #            rover.path = path
-        #            rover.mode = 'goal'
-        #        else:
-        #            rover.goal = None
-        #            print 'No Path Found!'
+        rover.next_goal = goal
 
         # visualization ...
-        cimg = np.zeros((mh,mw,3), dtype=np.float32)
+        #cimg = np.zeros((mh,mw,3), dtype=np.float32)
+        cimg = np.copy(bound)
         if rover.goal is not None:
-            cv2.circle(cimg, tuple(np.int_(rover.pos)), 2, [0.0, 1.0, 0.0])
-            cv2.circle(cimg, tuple(np.int_(rover.goal)), 2, [0.0,0.0,1.0])
+            cv2.circle(cimg, tuple(np.int_(rover.pos)), 2, [0.0, 255, 0.0])
+            cv2.circle(cimg, tuple(np.int_(rover.goal)), 2, [0.0,0.0,255])
         if rover.path is not None:
             for (p0, p1) in zip(rover.path[:-1], rover.path[1:]):
                 x0,y0 = p0
                 x1,y1 = p1
                 #cv2.line( (y0,x0), (y1,x1), (128)
-                cv2.line(cimg, (x0,y0), (x1,y1), (1,0,0), 2)
+                cv2.line(cimg, (x0,y0), (x1,y1), (255,0,0), 1)
+
+        if rover.p0 is not None:
+            for (p0, p1) in zip(rover.p0[:-1], rover.p0[1:]):
+                x0,y0 = p0
+                x1,y1 = p1
+                #cv2.line( (y0,x0), (y1,x1), (128)
+                cv2.line(cimg, (x0,y0), (x1,y1), (255,255,0), 1)
 
         #for i, c in enumerate(segs):
         #    #print np.shape(c)
         #    cv2.polylines(cimg, c[np.newaxis, ...], False, color=np.random.uniform(size=3), thickness=1)
 
-        cv2.imshow('bound', np.flipud(bound))
+        #cv2.imshow('bound', np.flipud(bound))
         cv2.imshow('cimg', np.flipud(cimg))
         cv2.waitKey(10)
 
