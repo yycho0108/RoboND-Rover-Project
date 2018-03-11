@@ -247,6 +247,7 @@ class ImageProcessor(object):
                 #cv2.line( (y0,x0), (y1,x1), (128)
                 cv2.line(cimg, (x0,y0), (x1,y1), (255,255,0), 1)
 
+        # cimg will show mission status; position, goal, boundary, path.
         cv2.imshow('cimg', np.flipud(cimg))
         cv2.waitKey(10)
 
@@ -274,8 +275,6 @@ class ImageProcessor(object):
         stat[nav,2] = 255
         stat[:, 1 ] = 0
         stat[obs,0] = 255
-
-        #rover.local_map = self._cvt_rover(
 
         for rad in range(10):
             cv2.circle(stat, (w/2,h), rad*10, (255,255,255), 1)
