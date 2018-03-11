@@ -234,6 +234,10 @@ class ImageProcessor(object):
             
             fy, fx = frontier.nonzero() #(2,N)
 
+            good_goal = (map_obs[fy,fx] <= 1)
+            fy = fy[good_goal]
+            fx = fx[good_goal]
+
             fdist = np.sqrt(np.square(fy-ty) + np.square(fx-tx))
             if np.size(fdist) > 0:
                 fidx = np.argmin(fdist)

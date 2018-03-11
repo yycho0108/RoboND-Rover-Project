@@ -1,4 +1,6 @@
 import numpy as np
+import cv2
+from astar import AStar2DGrid as AStar
 
 class RoverFSM(object):
     """ Simple Rover State Machine """
@@ -8,10 +10,14 @@ class RoverFSM(object):
         self._sargs = sargs
         self._info = {
                 'nomove_cnt' : 0,
-                'stuck_cnt' : 0
+                'stuck_cnt' : 0,
+                'moveto_global_path' : [],
+                'moveto_local_phase' : 'turn'
                 }
         self._smap = {
                 'moveto' : self.moveto,
+                'moveto_local' : self.moveto_local,
+                'moveto_global' : self.moveto_global,
                 'unstuck' : self.unstuck,
                 'swerve' : self.swerve,
                 'pickup' : self.pickup
@@ -24,7 +30,7 @@ class RoverFSM(object):
         returns True if rover is moving.
         """
         rover = self._rover
-        return (np.abs(rover.vel) > 0.2)
+        return (np.abs(rover.vel) > 0.1)
 
     def check_stuck(self):
         """
@@ -58,11 +64,16 @@ class RoverFSM(object):
         trg = target
         dx, dy = np.subtract(target, rover.pos)
         dist = np.sqrt(dx**2+dy**2)
+        ang = np.arctan2(dy, dx) - np.deg2rad(rover.yaw)
+        ang = (ang + np.pi) % (2*np.pi) - np.pi
 
-        if dist > 5.0:
-            return self.moveto_global(target)
-        else:
-            return self.moveto_local(target)
+        return self.moveto_global(target)
+
+        #if dist <= 5.0 and np.abs(ang) < np.pi / 2.0:
+        #    # close & front-ish
+        #    return self.moveto_local(target)
+        #else:
+        #    return self.moveto_global(target)
 
     def unstuck(self, prv, pargs):
         """
@@ -94,52 +105,127 @@ class RoverFSM(object):
             # go back to whatever previous step was.
             return prv, pargs 
 
-    def swerve(self, target=None):
+    def moveto_global(self, target):
+        # compute ...
+        rover = self._rover
+        if len(self._info['moveto_global_path']) <= 0:
+            map_obs = np.greater(self._rover.worldmap[:,:,0], 2)
+            #map_obs = cv2.dilate(map_obs.astype(np.uint8), cv2.getStructuringElement(cv2.MORPH_DILATE, (3,3)))
+            #map_obs = map_obs.astype(np.bool)
+            src = tuple(np.int32(rover.pos))
+            dst = tuple(np.int32(target))
+            astar = AStar(map_obs, src, dst)
+            _, path = astar()
+            # simplify path
+            if path is None:
+                # No Path! Abort
+                # TODO : Fix
+                rover.goal = None
+                return 'swerve', {}
+            else:
+                path = cv2.approxPolyDP(path, 3.0, closed=False)[:,0,:]
+                self._info['moveto_global_path'] = path
+                self._info['moveto_local_phase'] = 'turn'
+
+        return 'moveto_local', {'path':self._info['moveto_global_path'], 'phase' : 'turn'}
+
+
+
+    def moveto_local(self, path=None, phase='turn'):
+        rover = self._rover
+
+        # when I write a proper local planner:
+        #if self._info['moveto_local_path'] is None:
+        #    astar = AStar(mo, (tx,ty), goal)
+        #    _, path = astar()
+        #    self._info['moveto_local_path'] = path
+
+        if len(path) == 0:
+            self._info['moveto_global_path'] = []
+            # TODO : fix this when done
+            # completed goal!
+            rover.goal = None
+            return 'swerve', {}
+
+        target = path[0]
+        tx, ty = target
+        dx, dy = np.subtract(target, rover.pos)
+
+        da = np.arctan2(dy, dx) - np.deg2rad(rover.yaw)
+        da = (da + np.pi) % (2*np.pi) - np.pi
+        dr = np.sqrt(dx**2+dy**2)
+
+        if dr <= 2.0:
+            # accept current position + move on
+            return 'moveto_local', {'path' : path[1:], 'phase' : 'turn'}
+
+        if phase == 'turn':
+            if np.abs(da) <= np.deg2rad(10):
+                # accept current angle + forwards
+                return 'moveto_local', {'path' : path, 'phase' : 'forward'}
+            steer = np.clip(np.rad2deg(da), -15.0, 15.0)
+            self.turn(steer)
+        elif phase  == 'forward':
+            # turn less responsively
+            steer = np.clip(np.rad2deg(da / 2.0), -15.0, 15.0)
+            self.move(steer=steer)
+            # TODO : check stuck-ness here
+
+        return 'moveto_local', {'path' : path, 'phase' : phase}
+
+        # target direction
+        #if target is not None:
+        #    tx, ty = target
+        #    dx, dy = np.subtract(target, rover.pos)
+
+        #    dd = np.sqrt(dx**2 + dy**2)
+        #    if dd < 2.0:
+        #        self._rover.goal = None
+        #        return 'moveto_local', {'target' : None}
+        #    elif self._rover.worldmap[ty,tx,0] > 5:
+        #        # abort
+        #        self._rover.goal = None
+        #        return 'moveto_local', {'target' : None}
+
+        #    da = np.arctan2(dy, dx) - np.deg2rad(rover.yaw)
+        #    da = (da + np.pi) % (2*np.pi) - np.pi
+
+        #    if self.check_obs(da):
+        #        print 'swerve-obs'
+        #        # prioritize obstacle avoidance
+        #        # move forwards max-speed, but with angle in mind.
+        #        steer = np.clip(np.mean(rover.nav_angles * 180/np.pi), -15, 15)
+        #        self.move(steer=steer)
+        #    else:
+        #        print 'swerve-clear'
+        #        # no obstacle in sight
+        #        if np.abs(da) > np.deg2rad(45): # +-60 deg.
+        #            print 'swerve-turn'
+        #            # turn first if target is to your back
+        #            #steer = np.clip(da * 10, -15, 15)
+        #            steer = np.clip(np.mean(rover.nav_angles * 180/np.pi), -15, 15)
+        #            #self.turn(steer)
+        #            self.move(steer=steer)
+        #        else:
+        #            print 'swerve-fw'
+        #            steer = np.clip(np.mean(rover.nav_angles * 180/np.pi), -15, 15)
+        #            self.move(steer=steer)
+        #            #steer = np.clip(da * 20, -15, 15)
+        #            #self.move(steer=steer)
+        #    return 'moveto_local', {'target' : target}
+
+    def swerve(self):
         rover = self._rover
 
         # Check the extent of navigable terrain
         if self.check_stuck():
-            return 'unstuck', {'prv':'swerve', 'pargs' : {'target':target}}
+            return 'unstuck', {'prv':'swerve', 'pargs' : {}}
         
-        # target direction
-        if target is not None:
-            dx, dy = np.subtract(target, rover.pos)
-
-            dd = np.sqrt(dx**2 + dy**2)
-            if dd < 2.0:
-                return 'swerve', {'target' : None}
-
-            da = np.arctan2(dy, dx) - np.deg2rad(rover.yaw)
-            da = (da + np.pi) % (2*np.pi) - np.pi
-
-            if self.check_obs(da):
-                print 'swerve-obs'
-                # prioritize obstacle avoidance
-                # move forwards max-speed, but with angle in mind.
-                steer = np.clip(np.mean(rover.nav_angles * 180/np.pi), -15, 15)
-                self.move(steer=steer)
-            else:
-                print 'swerve-clear'
-                # no obstacle in sight
-                if np.abs(da) > np.deg2rad(120): # +-60 deg.
-                    print 'swerve-turn'
-                    print da
-                    # turn first if target is to your back
-                    steer = np.clip(da * 10, -15, 15)
-                    self.turn(steer)
-                else:
-                    print 'swerve-fw'
-                    steer = np.clip(np.mean(rover.nav_angles * 180/np.pi), -15, 15)
-                    self.move(steer=steer)
-                    #steer = np.clip(da * 20, -15, 15)
-                    #self.move(steer=steer)
-            return 'swerve', {'target' : target}
         else:
             # default behavior; follow the terrain-ish.
-            print 'swerve-notarg'
             steer = np.clip(np.mean(rover.nav_angles * 180/np.pi), -15, 15)
             self.move(steer=steer)
-            return 'swerve', {'target' : target}
+            return 'swerve', {}
 
     """ primitive actions """
     def stop(self):
@@ -204,15 +290,9 @@ class RoverFSM(object):
 
         # global state tracking ...
         
-
         # responding to planner ...
-        if not self._state is 'unstuck' \
-                and self._rover.goal is not None:
-            if self._state is 'swerve' and self._sargs['target'] is not None:
-                pass
-            else:
-                self._state = 'swerve'
-                self._sargs = {'target' : self._rover.goal}
-
-
-
+        if not (self._state is 'unstuck'):
+            if self._rover.goal is not None: # has a goal
+                if not (self._state.startswith('moveto')): # avoid interrupting
+                    self._state = 'moveto'
+                    self._sargs = {'target' : self._rover.goal}
