@@ -13,6 +13,7 @@ class RoverFSM(object):
         self._sargs = sargs
         self._info = {
                 'nomove_cnt' : 0,
+                'try_unstuck_cnt' : 0,
                 'unstuck_cnt' : 0,
                 'stuck_cnt' : 0,
                 }
@@ -73,7 +74,7 @@ class RoverFSM(object):
     def abort(self):
         return 'abort', {}
 
-    def unstuck(self, prv, pargs):
+    def unstuck(self, prv, pargs, dir=None):
         """
         Get the rover out of a stuck state.
         Returns to 'prv' state after it regains mobility.
@@ -83,25 +84,30 @@ class RoverFSM(object):
         period = 400
         if stuck:
             self._info['stuck_cnt'] += 1
-            if self._info['stuck_cnt'] % period < period * 0.2:
-                # try turning, 20% of the time
-                self.turn(steer=15)
-            elif self._info['stuck_cnt'] % period < period * 0.5:
-                # try moving back, 30% of the time
-                self.move(target_vel = -self._rover.max_vel)
-            elif self._info['stuck_cnt'] % period < period * 0.7:
-                # try turning, 20% of the time
-                self.turn(steer=-15)
+            if dir is not None:
+                self.turn(steer=15*np.sign(dir))
             else:
-                # try moving forwards, 30% of the time
-                self.move(target_vel = +self._rover.max_vel)
-
-            return 'unstuck', {'prv': prv, 'pargs' : pargs}
+                if self._info['stuck_cnt'] % period < period * 0.2:
+                    # try turning, 20% of the time
+                    self.turn(steer=15)
+                elif self._info['stuck_cnt'] % period < period * 0.5:
+                    # try moving back, 30% of the time
+                    self.move(target_vel = -self._rover.max_vel)
+                elif self._info['stuck_cnt'] % period < period * 0.7:
+                    # try turning, 20% of the time
+                    self.turn(steer=-15)
+                else:
+                    # try moving forwards, 30% of the time
+                    self.move(target_vel = +self._rover.max_vel)
         else:
             # clear flag
-            self._info['stuck_cnt'] = 0
-            # go back to whatever previous step was.
-            return prv, pargs 
+            self._info['unstuck_cnt'] += 1
+            if self._info['unstuck_cnt'] > 100:
+                self._info['stuck_cnt'] = 0
+                self._info['unstuck_cnt'] = 0
+                # go back to whatever previous step was.
+                return prv, pargs 
+        return 'unstuck', {'prv': prv, 'pargs' : pargs}
 
     def plan(self):
         # stop and think ...
@@ -282,36 +288,49 @@ class RoverFSM(object):
 
         if dr <= rtol:
             # accept current position + move on
-            print 'accept'
             return 'moveto_local', {'path' : path[1:], 'phase' : 'turn', 'rtol':rtol}
+
+        if np.abs(da) >= np.deg2rad(90):
+            # correct for large angular error
+            return 'moveto_local', {'path' : path, 'phase' : 'turn', 'rtol':rtol}
 
         if phase == 'turn':
             dadr = np.abs(da) / dr #15
             if np.abs(da) <= np.deg2rad(10):#~+-10 deg.
-                # accept current angle + forwards
+                # accept current angle + go forwards
                 return 'moveto_local', {'path' : path, 'phase' : 'forward', 'rtol':rtol}
             steer = np.clip(np.rad2deg(da), -15.0, 15.0)
             self.turn(steer)
         elif phase  == 'forward':
             # turn less responsively
             steer = np.clip(np.rad2deg(da), -15.0, 15.0)
-            self.move(steer=steer)
-            # TODO : check stuck-ness here
+            if len(rover.nav_angles) > rover.stop_forward:
+                if rover.rock is None:
+                    # then precise control isn't as important
+                    steer_o = np.clip(np.mean(rover.nav_angles * 180/np.pi), -15, 15)
+                    steer = 0.5 * steer + 0.5 * steer_o
+                self.move(target_vel = np.clip(0.5 * dr, 0, rover.max_vel), steer=steer)
+            else:
+                self.move(target_vel = np.clip(0.25 * dr, 0, rover.max_vel), steer=steer)
 
-        if self.check_stuck():
+        #if phase == 'forward' and self.check_stuck():
+        #    # probably quicker to ask for a new plan.
+        #    return 'moveto_local', {'path' : [], 'phase' : 'abort', 'rtol':rtol}
+
+        if self._info['nomove_cnt'] > 120:
             if np.abs(da) <= np.deg2rad(10):
                 # aligned with goal, probably bad plan
                 # abort-like
                 return 'plan', {}
             else:
-                self._info['unstuck_cnt'] += 1
-                if self._info['unstuck_cnt'] > 1: # try 1 time
-                    self._info['unstuck_cnt'] = 0
+                self._info['try_unstuck_cnt'] += 1
+                if self._info['try_unstuck_cnt'] > 1: # try 1 time
+                    self._info['try_unstuck_cnt-'] = 0
                     # really stuck. ask for a new plan!
-                    return 'moveto_local', {'path' : [], 'phase' : 'turn', 'rtol':rtol}
+                    return 'moveto_local', {'path' : [], 'phase' : 'abort', 'rtol':rtol}
                 else:
                     # try to get self unstuck.
-                    return 'unstuck', {'prv' : 'moveto_local', 'pargs' : {'path' : path, 'phase' : phase, 'rtol':rtol}}
+                    return 'unstuck', {'dir' : -np.sign(da), 'prv' : 'moveto_local', 'pargs' : {'path' : path, 'phase' : phase, 'rtol':rtol}}
 
         return 'moveto_local', {'path' : path, 'phase' : phase, 'rtol':rtol}
 
@@ -329,21 +348,44 @@ class RoverFSM(object):
             return 'swerve', {}
 
     def pickup_local(self, target, m_phase='turn'):
+        rover = self._rover
+        if rover.rock is not None:
+            d = np.linalg.norm(np.subtract(target, rover.pos))
+            print 'd', d
+            if d >= 0.5:
+                # update target definition only when seemingly valid
+                target = rover.rock
+
         # want to get fairly close ...
-        state, args = self.moveto_local([target], m_phase, rtol=1.0)
+        state, args = self.moveto_local([target], m_phase, rtol=1.5)
+
+        # try picking up regardless of returned state;
+        # i.e. it's beneficial to override 'unstuck' sometimes.
+
+        res = self.pickup()
+        if res[0] == 'pickup':
+            return 'pickup', {}
 
         if state == 'unstuck':
             # get self unstuck
             return 'unstuck', {'prv' : 'pickup_local', 'pargs' : {'target' : target, 'm_phase' : m_phase}}
-        elif (state == 'plan') or len(args['path'])==0:
-            # completed path
-            res_2 = self.pickup()
-            if res_2[0] == 'pickup':
-                # continue picking up
-                return 'pickup', {}
-            else:
-                # something failed?
-                return 'pickup_local', {'target' : target, 'm_phase' : m_phase}
+        #elif (state == 'plan') or len(args['path']) == 0:
+        #    # completed path
+        #    res_2 = self.pickup()
+        #    if res_2[0] == 'pickup':
+        #        # continue picking up
+        #        return 'pickup', {}
+        #    else:
+        #        # abort
+        #        return 'plan', {}
+        #        # something failed?
+        #        #return 'pickup_local', {'target' : target, 'm_phase' : m_phase}
+        elif state == 'moveto_local':
+            if args['phase'] == 'abort':
+                # abort trying to pick up.
+                rover.rock = None
+                return 'plan', {}
+
         return 'pickup_local', {'target' : target, 'm_phase' : args['phase']}
 
     """ primitive actions """
@@ -441,15 +483,19 @@ class RoverFSM(object):
 
     def run(self):
         """ Run the State Machine """
+
+        # prioritize picking up rocks over map exploration
+        if not (self._state is 'unstuck' or self._state.startswith('pickup')) and self.check_rock():
+            self.stop()
+            self._state = 'pickup_local'
+            self._sargs = {'target' : self._rover.rock}
+
         print 'fsm state : ', self._state
         sfn = self._smap[self._state]
         res = sfn(**self._sargs)
         self._state, self._sargs = res
 
-        # prioritize picking up rocks over map exploration
-        if not (self._state is 'unstuck' or self._state.startswith('pickup')) and self.check_rock():
-            self._state = 'pickup_local'
-            self._sargs = {'target' : self._rover.rock}
+
 
         viz = True
         if viz:
