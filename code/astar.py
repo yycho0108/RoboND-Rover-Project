@@ -1,5 +1,6 @@
 from collections import deque
 import numpy as np
+import cv2
 
 # pt = [x, y, g, f]
 class AStarQueue(object):
@@ -41,22 +42,33 @@ class LDist(object):
             res += abs(e0-e1)
         return res
 
-class GDist(object):
-    grid = None
-    def __init__(self, x1, o, scale):
-        x1 = np.reshape(x1, [1,1,2]) # given as i,j.
-        n, m = np.shape(o)[:2]
-        if GDist.grid is None:
-            GDist.grid = np.stack(
-                    np.meshgrid(range(n), range(m), indexing='ij'),
-                    axis=-1
-                    )
-        self._h = np.linalg.norm(GDist.grid - x1, axis=-1)
-        self._h += (o * scale)
+#class GDist(object):
+#    grid = None
+#    def __init__(self, x1, o, scale):
+#        x1 = np.reshape(x1, [1,1,2]) # given as i,j.
+#        n, m = np.shape(o)[:2]
+#        if GDist.grid is None:
+#            GDist.grid = np.stack(
+#                    np.meshgrid(range(n), range(m), indexing='ij'),
+#                    axis=-1
+#                    )
+#        self._h = np.linalg.norm(GDist.grid - x1, axis=-1)
+#        self._h += (o * scale)
+#
+#    def __call__(self, x0):
+#        i,j = x0
+#        return self._h[i,j]
 
+class GDist(EDist):
+    def __init__(self, x1, o, scale=1):
+        ker = cv2.getStructuringElement(cv2.MORPH_DILATE, (3,3))
+        self._o = cv2.dilate(np.float32(o), ker, iterations=2)
+        self._s = scale
+        super(GDist, self).__init__(x1)
     def __call__(self, x0):
-        i,j = x0
-        return self._h[i,j]
+        return super(GDist, self).__call__(x0) + self._s*self._o[x0]
+        #return EDist.__call__(x0) + self._o[x0]
+
 
 class AStar2DGrid(object):
     def __init__(self, grid, init, goal, h=None, order='xy'):

@@ -5,28 +5,6 @@ import sys
 
 from utils import normalize_angle
 
-def score_frontier(tx, ty, yaw, fx, fy):
-    """
-    Rank Candidate Frontier Points.
-    Currently, it chooses the one that is easiest to get to.
-    (Minimum Distance & Angle)
-    """
-
-    dy = fy - ty
-    dx = fx - tx
-
-    # score 1 : distance from self ( better if small )
-    fdist = np.sqrt(np.square(dy) + np.square(dx))
-
-    # score 2 : angle from self : ( better if small )
-    fang = np.arctan2(dy, dx) - yaw
-    fang = (fang + np.pi)%(2*np.pi)-np.pi # normalize to +-pi
-    fang = np.abs(fang)
-
-    fscore = fdist * fang
-    fidx = np.argmin(fscore)
-
-    return fx[fidx], fy[fidx]
 
 def cproc(cnt):
     """
@@ -171,7 +149,6 @@ class ImageProcessor(object):
             self._first = False
             rover.goal = None
             rover.p0 = None
-            rover.next_goal = None
             rover.path = None
 
         # Unpack Data
@@ -187,69 +164,7 @@ class ImageProcessor(object):
 
         h, w = img.shape[:2]
         mh, mw = map.shape[:2]
-
-        # Frontier
-        map_nav = map[:,:,2]
-        map_obs = map[:,:,0]
-        ker = cv2.getStructuringElement(cv2.MORPH_DILATE, (3,3))
-
-        mapped = np.logical_or(
-                np.greater(map_nav, 20),
-                np.greater(map_obs, 2),
-                )
-        mapped = 255 * mapped.astype(np.uint8)
-        mapped = cv2.erode(mapped, cv2.getStructuringElement(cv2.MORPH_ERODE, (3,3)), iterations=1)
-
-        cv2.imshow('mapped', np.flipud(mapped))
-
-        cnt = cv2.findContours(mapped.copy(), cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)[1]
-        mapped.fill(0)
-        goal = None
-        if len(cnt) > 0:
-            map_nav = cv2.dilate(map_nav, ker, iterations=1)
-            cv2.drawContours(mapped, cnt, -1, 255)
-            frontier = np.logical_and(map_nav, mapped)
-            frontier = 255 * frontier.astype(np.uint8)
-            
-            fy, fx = frontier.nonzero() #(2,N)
-
-            # basic filter : no obstacles!
-            good_goal = (map_obs[fy,fx] <= 1)
-            fy = fy[good_goal]
-            fx = fx[good_goal]
-
-            if np.size(fy) > 0:
-                goal = score_frontier(tx, ty, yaw, fx, fy)
-
-        cimg = (np.logical_and(
-            np.greater(map_nav, 20),
-            np.greater(map_obs, 20)) * 255).astype(np.uint8)
-        cimg = cv2.cvtColor(cimg, cv2.COLOR_GRAY2BGR)
-
-        rover.next_goal = goal
-
-        # visualization ...
-        #cimg = np.zeros((mh,mw,3), dtype=np.float32)
-        if rover.goal is not None:
-            cv2.circle(cimg, tuple(np.int_(rover.pos)), 2, [0.0, 255, 0.0])
-            cv2.circle(cimg, tuple(np.int_(rover.goal)), 2, [0.0,0.0,255])
-        if rover.path is not None:
-            for (p0, p1) in zip(rover.path[:-1], rover.path[1:]):
-                x0,y0 = p0
-                x1,y1 = p1
-                #cv2.line( (y0,x0), (y1,x1), (128)
-                cv2.line(cimg, (x0,y0), (x1,y1), (255,0,0), 1)
-
-        if rover.p0 is not None:
-            for (p0, p1) in zip(rover.p0[:-1], rover.p0[1:]):
-                x0,y0 = p0
-                x1,y1 = p1
-                #cv2.line( (y0,x0), (y1,x1), (128)
-                cv2.line(cimg, (x0,y0), (x1,y1), (255,255,0), 1)
-
-        # cimg will show mission status; position, goal, boundary, path.
-        cv2.imshow('cimg', np.flipud(cimg))
-        cv2.waitKey(10)
+        #cv2.imshow('mapped', np.flipud(mapped))
 
         # Warp
         warped = cv2.warpPerspective(img, self._M, (w,h))# keep same size as input image
