@@ -31,7 +31,7 @@ def perception_step(Rover):
                 th_obs = ((0,0,1), (35,256,90)),
                 th_roc = ((20,230,100), (30,256,230)), # don't know yet
                 th_deg = 1.0,
-                th_rng = 8.0,
+                th_rng = 7.0,
                 th_ang = np.deg2rad(75),
                 hsv=True
                 )

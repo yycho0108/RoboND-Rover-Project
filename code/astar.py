@@ -60,13 +60,22 @@ class LDist(object):
 #        return self._h[i,j]
 
 class GDist(EDist):
-    def __init__(self, x1, o, scale=1):
+    def __init__(self, x1, o, scale=1, factor=2):
         ker = cv2.getStructuringElement(cv2.MORPH_DILATE, (3,3))
-        self._o = cv2.dilate(np.float32(o), ker, iterations=2)
+        o = cv2.erode(o, ker, iterations=1)
+        self._o = [np.float32(o)]
+        for i in range(factor):
+            o = cv2.dilate(self._o[-1], ker, iterations=2)
+            self._o.append(o)
+        self._o = self._o[1:] # skip first o
         self._s = scale
         super(GDist, self).__init__(x1)
     def __call__(self, x0):
-        return super(GDist, self).__call__(x0) + self._s*self._o[x0]
+        res = super(GDist, self).__call__(x0)
+        s0 = self._s
+        for o in self._o:
+            res += s0 * o[x0]
+        return res
         #return EDist.__call__(x0) + self._o[x0]
 
 

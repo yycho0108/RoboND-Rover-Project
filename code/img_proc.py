@@ -150,6 +150,7 @@ class ImageProcessor(object):
             rover.goal = None
             rover.p0 = None
             rover.path = None
+            rover.rock = None
 
         # Unpack Data
         img = rover.img
@@ -185,6 +186,12 @@ class ImageProcessor(object):
         roc, (wx, wy) = self.convert(warped, self._th_roc, yaw, tx, ty, mw, mh, polar=False)
         if update_map:
             map[wy, wx, 1] = np.clip(map[wy,wx,1]+1, 0, 255)
+
+        if len(wx) > 0:
+            rover.rock = (np.mean(wx), np.mean(wy))
+        else:
+            rover.rock = None
+            #
 
         stat = np.zeros_like(warped)
         stat[nav,2] = 255

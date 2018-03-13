@@ -3,6 +3,8 @@ import cv2
 from astar import AStar2DGrid as AStar, GDist
 from utils import score_frontier, normalize_angle
 
+OBS_THRESH = 5
+
 class RoverFSM(object):
     """ Simple Rover State Machine """
     def __init__(self, rover, state='plan', **sargs):
@@ -20,6 +22,7 @@ class RoverFSM(object):
                 'moveto' : self.moveto,
                 'moveto_local' : self.moveto_local,
                 'moveto_global' : self.moveto_global,
+                'pickup_local' : self.pickup_local,
                 'unstuck' : self.unstuck,
                 'swerve' : self.swerve,
                 'pickup' : self.pickup
@@ -41,6 +44,7 @@ class RoverFSM(object):
         returns True is rover is stuck.
         """
         rover = self._rover
+        #return self._info['nomove_cnt'] > 120
         return len(rover.nav_angles) < rover.go_forward or self._info['nomove_cnt'] > 120
 
 
@@ -58,7 +62,14 @@ class RoverFSM(object):
         good_idx = np.logical_and(nav_a > ang-atol, nav_a < ang + atol)
         return len(good_idx) < rover.go_forward
 
+    def check_rock(self):
+        rover = self._rover
+        return (rover.rock is not None)
+
     """ high-level actions """
+    #def swrap(self, state, sargs):
+    #    return 
+
     def abort(self):
         return 'abort', {}
 
@@ -109,14 +120,18 @@ class RoverFSM(object):
         tx, ty = rover.pos
         yaw = rover.yaw
         yaw = normalize_angle(np.deg2rad(yaw))
-        map_nav = rover.worldmap[:,:,2]
         map_obs = rover.worldmap[:,:,0]
+        map_roc = rover.worldmap[:,:,1]
+        map_nav = rover.worldmap[:,:,2]
+
+        # first check rocks ...
+        #goal = self
 
         # define mapped region ...
         ker = cv2.getStructuringElement(cv2.MORPH_DILATE, (3,3))
         mapped = np.logical_or(
                 np.greater(map_nav, 20),
-                np.greater(map_obs, 2),
+                np.greater(map_obs, OBS_THRESH),
                 )
         mapped = 255 * mapped.astype(np.uint8)
         mapped = cv2.erode(mapped, cv2.getStructuringElement(cv2.MORPH_ERODE, (3,3)), iterations=1)
@@ -130,6 +145,7 @@ class RoverFSM(object):
             cv2.drawContours(mapped, cnt, -1, 255)
             frontier = np.logical_and(map_nav, mapped)
             frontier = 255 * frontier.astype(np.uint8)
+            cv2.imshow('frontier', np.flipud(frontier))
             
             fy, fx = frontier.nonzero() #(2,N)
 
@@ -175,8 +191,6 @@ class RoverFSM(object):
         #else:
         #    return self.moveto_global(target)
 
-
-
     def moveto_global(self, target):
         """
         Compose global plan from current position and target.
@@ -195,7 +209,8 @@ class RoverFSM(object):
         #map_obs /= 5.0
 
         # alternatively:
-        map_obs = np.greater(self._rover.worldmap[:,:,0], 2).astype(np.float32)
+        map_obs = np.greater(rover.worldmap[:,:,0], OBS_THRESH).astype(np.float32)
+
         #map_obs = np.less(self._rover.worldmap[:,:,2], 10)
 
         #map_obs = cv2.erode(map_obs.astype(np.uint8), cv2.getStructuringElement(cv2.MORPH_ERODE, (3,3)))
@@ -217,7 +232,7 @@ class RoverFSM(object):
             rover.goal = None
             return 'abort', {}
         else:
-            path = cv2.approxPolyDP(path, 2.0, closed=False)[:,0,:]
+            path = cv2.approxPolyDP(path, 3.0, closed=False)[:,0,:]
 
             ## push out from wall
             dy = cv2.Sobel(map_obs, cv2.CV_8UC1, 0, 1, ksize=5) / 5.
@@ -229,13 +244,14 @@ class RoverFSM(object):
 
             # registered as current goal
             rover.goal = target
-            rover.path = np.int32(path - dp)
+            rover.path = path#np.int32(path - dp)
             rover.p0 = path
             # TODO : make sure poly approximation doesn't cross obstacles
 
         return 'moveto_local', {'path' : path, 'phase' : 'turn'}
 
-    def moveto_local(self, path=None, phase='turn'):
+
+    def moveto_local(self, path=None, phase='turn', rtol=2.0):
         """
         Follow local waypoints.
         Currently, moveto_local() doesn't handle scenarios
@@ -261,18 +277,19 @@ class RoverFSM(object):
         dx, dy = np.subtract(target, rover.pos)
 
         da = np.arctan2(dy, dx) - np.deg2rad(rover.yaw)
-        da = (da + np.pi) % (2*np.pi) - np.pi
+        da = normalize_angle(da)
         dr = np.sqrt(dx**2+dy**2)
 
-        if dr <= 2.0:
+        if dr <= rtol:
             # accept current position + move on
-            return 'moveto_local', {'path' : path[1:], 'phase' : 'turn'}
+            print 'accept'
+            return 'moveto_local', {'path' : path[1:], 'phase' : 'turn', 'rtol':rtol}
 
         if phase == 'turn':
             dadr = np.abs(da) / dr #15
             if np.abs(da) <= np.deg2rad(10):#~+-10 deg.
                 # accept current angle + forwards
-                return 'moveto_local', {'path' : path, 'phase' : 'forward'}
+                return 'moveto_local', {'path' : path, 'phase' : 'forward', 'rtol':rtol}
             steer = np.clip(np.rad2deg(da), -15.0, 15.0)
             self.turn(steer)
         elif phase  == 'forward':
@@ -281,18 +298,22 @@ class RoverFSM(object):
             self.move(steer=steer)
             # TODO : check stuck-ness here
 
-        if self._info['nomove_cnt'] > 120:
-        #if self.check_stuck():
-            self._info['unstuck_cnt'] += 1
-            if self._info['unstuck_cnt'] > 1: # try 1 time
-                self._info['unstuck_cnt'] = 0
-                # really stuck. ask for a new plan!
-                return 'moveto_local', {'path' : [], 'phase' : 'turn'}
+        if self.check_stuck():
+            if np.abs(da) <= np.deg2rad(10):
+                # aligned with goal, probably bad plan
+                # abort-like
+                return 'plan', {}
             else:
-                # try to get self unstuck.
-                return 'unstuck', {'prv' : 'moveto_local', 'pargs' : {'path' : path, 'phase' : 'forward'}}
+                self._info['unstuck_cnt'] += 1
+                if self._info['unstuck_cnt'] > 1: # try 1 time
+                    self._info['unstuck_cnt'] = 0
+                    # really stuck. ask for a new plan!
+                    return 'moveto_local', {'path' : [], 'phase' : 'turn', 'rtol':rtol}
+                else:
+                    # try to get self unstuck.
+                    return 'unstuck', {'prv' : 'moveto_local', 'pargs' : {'path' : path, 'phase' : phase, 'rtol':rtol}}
 
-        return 'moveto_local', {'path' : path, 'phase' : phase}
+        return 'moveto_local', {'path' : path, 'phase' : phase, 'rtol':rtol}
 
     def swerve(self):
         """ default implementation; follow navigable angles """
@@ -301,12 +322,29 @@ class RoverFSM(object):
         # Check the extent of navigable terrain
         if self.check_stuck():
             return 'unstuck', {'prv':'swerve', 'pargs' : {}}
-        
         else:
             # default behavior; follow the terrain-ish.
             steer = np.clip(np.mean(rover.nav_angles * 180/np.pi), -15, 15)
             self.move(steer=steer)
             return 'swerve', {}
+
+    def pickup_local(self, target, m_phase='turn'):
+        # want to get fairly close ...
+        state, args = self.moveto_local([target], m_phase, rtol=1.0)
+
+        if state == 'unstuck':
+            # get self unstuck
+            return 'unstuck', {'prv' : 'pickup_local', 'pargs' : {'target' : target, 'm_phase' : m_phase}}
+        elif (state == 'plan') or len(args['path'])==0:
+            # completed path
+            res_2 = self.pickup()
+            if res_2[0] == 'pickup':
+                # continue picking up
+                return 'pickup', {}
+            else:
+                # something failed?
+                return 'pickup_local', {'target' : target, 'm_phase' : m_phase}
+        return 'pickup_local', {'target' : target, 'm_phase' : args['phase']}
 
     """ primitive actions """
     def stop(self):
@@ -331,12 +369,15 @@ class RoverFSM(object):
             rover.steer=steer# Could be more clever here about which way to turn
 
     def pickup(self):
-        if Rover.near_sample:
-            if Rover.vel == 0 and not Rover.picking_up:
-                Rover.send_pickup = True
+        rover=self._rover
+        if rover.near_sample:
+            self.stop()
+            if rover.vel == 0 and not rover.picking_up:
+                rover.rock = None
+                rover.send_pickup = True
             return 'pickup', {}
         else:
-            return 'swerve', {}
+            return 'plan', {}
 
     def move(self, target_vel=None, steer=0):
         """ Go mainly forwards """
@@ -368,13 +409,15 @@ class RoverFSM(object):
         tx, ty = rover.pos
         yaw = rover.yaw
         yaw = normalize_angle(np.deg2rad(yaw))
-        map_nav = rover.worldmap[:,:,2]
 
+        map_nav = rover.worldmap[:,:,2]
         map_obs = rover.worldmap[:,:,0]
 
-        cimg = (np.logical_and(
-            np.greater(map_nav, 20),
-            np.greater(map_obs, 20)) * 255).astype(np.uint8)
+        #cimg = (np.logical_and(
+        #    np.greater(map_nav, 20),
+        #    np.greater(map_obs, 2)) * 255).astype(np.uint8)
+        
+        cimg = (np.greater(map_obs, OBS_THRESH) * 255).astype(np.uint8)
         cimg = cv2.cvtColor(cimg, cv2.COLOR_GRAY2BGR)
         
         if rover.goal is not None:
@@ -402,6 +445,11 @@ class RoverFSM(object):
         sfn = self._smap[self._state]
         res = sfn(**self._sargs)
         self._state, self._sargs = res
+
+        # prioritize picking up rocks over map exploration
+        if not (self._state is 'unstuck' or self._state.startswith('pickup')) and self.check_rock():
+            self._state = 'pickup_local'
+            self._sargs = {'target' : self._rover.rock}
 
         viz = True
         if viz:
