@@ -8,7 +8,7 @@ Yoonyoung Cho | 03/16/2018
 
 Unlike the examples provided, I first converted the input image in the HSV colorspace in order to minimize sensitivity to brightness, or saturation ([image source](https://www.researchgate.net/figure/HSV-Color-Space_fig2_284488273)).
 
-![HSV](./figures/HSV-Color-Space-50%.jpg)
+![HSV](./figures/HSV-Color-Space-Downsize.jpg)
 
 The three types of environmental markers (ground plane, obstacles and rocks) were clearly distinguishable in the RGB colorspace as well, so it was mostly a matter of personal preference. I wanted to take extra precaution in order to avoid confusion between by the presence of shadows and lit points on the ground (even though the difference was perhaps negligible), which may have influenced the perception of the rover throughout the mission at unexpected points.
 
