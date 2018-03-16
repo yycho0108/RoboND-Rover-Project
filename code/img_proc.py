@@ -191,7 +191,6 @@ class ImageProcessor(object):
             rover.rock = (np.mean(wx), np.mean(wy))
         else:
             rover.rock = None
-            #
 
         stat = np.zeros_like(warped)
         stat[nav,2] = 255
@@ -199,7 +198,23 @@ class ImageProcessor(object):
         stat[obs,0] = 255
 
         for rad in range(10):
-            cv2.circle(stat, (w/2,h), rad*10, (255,255,255), 1)
+            cv2.circle(stat, (w/2,h), np.int32(rad*self._scale), (255,255,255), 1)
+
+        # mark filtered region
+        fil = np.zeros((h,w), dtype=np.uint8)
+        center = int(w/2), int(h)
+        axlen = self._th_rng * self._scale
+        axes = int(axlen), int(axlen)
+        ang = np.rad2deg(self._th_ang)
+        cv2.ellipse(fil, center, axes,
+                0, -90-ang, -90+ang, # start+finish
+                255, -1
+                )
+        sel = np.logical_not(fil)
+        print np.shape(sel)
+
+        stat[sel,:] = np.uint8(stat[sel,:] * 0.5)
+        # = stat*0.5 + (255 - fil[...,np.newaxis])*0.5
 
         thresh = np.zeros_like(img)
         thresh[:, :, 2] = 255*self._threshold(

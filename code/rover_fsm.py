@@ -28,6 +28,7 @@ class RoverFSM(object):
                 'swerve' : self.swerve,
                 'pickup' : self.pickup
                 }
+        self._frontier = None
 
         """ status utility functions """
     def check_move(self):
@@ -151,7 +152,8 @@ class RoverFSM(object):
             cv2.drawContours(mapped, cnt, -1, 255)
             frontier = np.logical_and(map_nav, mapped)
             frontier = 255 * frontier.astype(np.uint8)
-            cv2.imshow('frontier', np.flipud(frontier))
+            self._frontier = frontier
+            #cv2.imshow('frontier', np.flipud(frontier))
             
             fy, fx = frontier.nonzero() #(2,N)
 
@@ -461,6 +463,8 @@ class RoverFSM(object):
         
         cimg = (np.greater(map_obs, OBS_THRESH) * 255).astype(np.uint8)
         cimg = cv2.cvtColor(cimg, cv2.COLOR_GRAY2BGR)
+        if self._frontier is not None:
+            cimg[..., 1] = self._frontier # show in green
         
         if rover.goal is not None:
             cv2.circle(cimg, tuple(np.int_(rover.pos)), 2, [0.0, 255, 0.0])
@@ -479,6 +483,7 @@ class RoverFSM(object):
 
         # cimg will show mission status; position, goal, boundary, path.
         cv2.imshow('cimg', np.flipud(cimg))
+        cv2.imwrite('cimg.png', np.flipud(cimg[::-1]))
         cv2.waitKey(10)
 
     def run(self):
