@@ -8,13 +8,13 @@ Yoonyoung Cho | 03/16/2018
 
 Unlike the examples provided, I first converted the input image in the HSV colorspace in order to minimize sensitivity to brightness, or saturation ([image source](https://www.researchgate.net/figure/HSV-Color-Space_fig2_284488273)).
 
-![HSV](../figures/HSV-Color-Space-50%.jpg)
+![HSV](./figures/HSV-Color-Space-50%.jpg)
 
 The three types of environmental markers (ground plane, obstacles and rocks) were clearly distinguishable in the RGB colorspace as well, so it was mostly a matter of personal preference. I wanted to take extra precaution in order to avoid confusion between by the presence of shadows and lit points on the ground (even though the difference was perhaps negligible), which may have influenced the perception of the rover throughout the mission at unexpected points.
 
 Thenceforth, in order to identify the thresholds, I created a [separate script](./code/helpers/find_color.py) that took in an image and basically allowed the user to find lower and upper bounds by clicking on multiple sample points (for reference), and adjusting trackbars to apply the bounds on the hsv image to produce the thresholded image. I use this functionality often enough, that I wanted to write something nice once, that I could use multiple times in the future. Here's what a typical interaction would look like:
 
-![find\_color](../figures/find_color.png)
+![find\_color](./figures/find_color.png)
 
 ## Image Processing Pipeline
 
@@ -36,7 +36,7 @@ Most of the improvements on perception was centered around *filtering* the input
 
 In the below image, the lit region indicates points that are considered valid; the spacing is in 1 meter intervals. Red actually indicates the navigable region (due to BGR ordering in OpenCV), while regions in blue are the obstacles.
 
-![filter](../figures/filter.png)
+![filter](./figures/filter.png)
 
 The filtering code and its visualization can be found [here](./code/img_proc.py).
 
@@ -51,7 +51,7 @@ In order to mitigate this, I decided to implement a [Finite State Machine](https
 
 Whereas the overall structure of the FSM isn't particularly innovative, I did take the liberty to construct a hierarchical FSM composed of several layers of states. In practice, each state was invoked from several places and overall ended up being a bit of a cobweb, but in principle the logic flows according to the following diagram:
 
-![Diagram](../figures/fsm.svg)
+![Diagram](./figures/fsm.svg)
 
 The rover starts by planning its route while going through good candidates for frontiers. In order to prevent the rover from being stuck without a goal, the rover defaults to swerving (reactive obstacle avoidance) while in planning mode. While this may not be ideal in real-world scenarios (because of heavy processing and possible artifacts in the map while moving around, it can be beneficial to "stop and think" while trying to perform high-level planning tasks), it works fairly well under the simulated conditions.
 
@@ -69,7 +69,7 @@ Rigorously defining the frontier proved to be a challenging task. In a high-leve
 
 I ultimately settled as finding the dilated contour around the navigable region that were *not* covered by the obstacle layers. The frontiers were then sorted by how close it is to the rover, as well as how well it aligns with its current orientation. This was mostly to prevent the rover from oscillating back and forth between distant frontiers, which had been a major time-sink for some iterations.
 
-![Plan](../figures/plan.png)
+![Plan](./figures/plan.png)
 
 In the figure, marked in green are the current frontiers; green circle is the current position, red circle is the goal, and the blue path is the global path. Obstacles are marked in magenta.
 
@@ -113,7 +113,3 @@ As requested, here are the simulation parameter to reproduce the results:
 
 - Resolution : 1024x768, Windowed
 - Graphics Quality : Good
-
-
-
-
