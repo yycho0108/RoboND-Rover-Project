@@ -82,8 +82,8 @@ Essentially, this operation transforms the pixel-coordinates expressed in angula
 
 Here's what the warping process looks like:
 
-Camera Image             |  Warped Image (Mine) | Warped Image (Provided)
-:-------------------------:|:-------------------------:
+Camera Image                                  |  Warped Image (Mine)          | Warped Image (Provided)
+:--------------------------------------------:|:-----------------------------:|:-----------------------------:
 ![a](./calibration_images/example_grid1.jpg)  |  ![b](./figures/warp_bad.png) | ![c](./figures/warp_good.png)
 
 After some experimentation, it appeared that the numbers provided by the lecture seemed to yield a more accurate projection, so I reused the values in all subsequent experiments.
