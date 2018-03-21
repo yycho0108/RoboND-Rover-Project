@@ -62,7 +62,7 @@ I simply called opencv's native function rather than chaining numpy's comparison
 In perspective, the following diagram spatially represents the previously defined color thresholds (the diagram can be reproduced through [col\_viz.py](./code/col_viz.py)):
 ![col\_viz](./figures/col_viz.png)
 
-This verify that there is no real overlap between the objects as far as color-features are concerned, thereby validating the approach.
+This verifies that there is no real overlap between the objects as far as color-features are concerned, thereby validating the approach.
 
 ## Image Processing Pipeline
 
@@ -85,8 +85,6 @@ Here's what the warping process looks like:
 Camera Image                                  |  Warped Image (Mine)          | Warped Image (Provided)
 :--------------------------------------------:|:-----------------------------:|:-----------------------------:
 ![a](./calibration_images/example_grid1.jpg)  |  ![b](./figures/warp_bad.png) | ![c](./figures/warp_good.png)
-
-After some experimentation, it appeared that the numbers provided by the lecture seemed to yield a more accurate projection, so I reused the values in all subsequent experiments.
 
 To put this in context, the following are the warp parameters in each of these cases:
 
