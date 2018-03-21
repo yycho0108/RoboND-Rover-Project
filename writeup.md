@@ -1,24 +1,149 @@
 # Project : Search and Sample Return
 
-Yoonyoung Cho | 03/16/2018
+Yoonyoung Cho | 03/20/2018
+
+# Description
+
+This project is modeled after the [NASA sample return challenge](https://www.nasa.gov/directorates/spacetech/centennial_challenges/sample_return_robot/index.html), and serves as the first project in the Udacity Robotics Software Nanodegree Term 1.
+
+The objective is to implement an autonomous ground-rover that explores through an unknown environment in search of rock samples. The rover is given some prior knowledge of the environment, such as general visual features, but without access to full information such as the terrain map or the sample locations. The lower-level controls, such as precise actuation, have been abstracted so that the focus is on high-level planning and visual perception of the environment through a frontal camera.
+
+See [here](./README.md) for the complete formal description from Udacity.
 
 # Notebook Analysis
 
+In the beginning phase of the project, I implemented the visual-processing pipeline in a Jupyter Notebook, with use of recorded data.
+
+See the [notebook](./code/Rover_Project_Test_Notebook.ipynb) for reference throughout this section.
+
 ## Color Selection
+
+The first step in the image-processing pipeline was color selection, in order to identify objects based on their color features. Given the relatively simple visual environment, this was an effective sensing strategy.
 
 Unlike the examples provided, I first converted the input image in the HSV colorspace in order to minimize sensitivity to brightness, or saturation ([image source](https://www.researchgate.net/figure/HSV-Color-Space_fig2_284488273)).
 
 ![HSV](./figures/HSV-Color-Space-Downsize.jpg)
 
-The three types of environmental markers (ground plane, obstacles and rocks) were clearly distinguishable in the RGB colorspace as well, so it was mostly a matter of personal preference. I wanted to take extra precaution in order to avoid confusion between by the presence of shadows and lit points on the ground (even though the difference was perhaps negligible), which may have influenced the perception of the rover throughout the mission at unexpected points.
+The three types of environmental markers (ground plane, obstacles and rocks) were clearly distinguishable in the RGB colorspace as well, so it was mostly a matter of personal preference. I wanted to take extra precaution in order to avoid confusion between by the presence of shadows and lit points on the ground (even though the difference was mostly negligible), which may have influenced the perception of the rover throughout the mission at unexpected points.
 
-Thenceforth, in order to identify the thresholds, I created a [separate script](./code/helpers/find_color.py) that took in an image and basically allowed the user to find lower and upper bounds by clicking on multiple sample points (for reference), and adjusting trackbars to apply the bounds on the hsv image to produce the thresholded image. I use this functionality often enough, that I wanted to write something nice once, that I could use multiple times in the future. Here's what a typical interaction would look like:
+In order to effectively identify the thresholds, I created a [separate script](./code/helpers/find_color.py) that took in an image and basically allowed the user to find lower and upper bounds by clicking on multiple sample points (for reference), and adjusting trackbars to apply the bounds on the hsv image to produce the thresholded image. I use this functionality often enough, that I wanted to write something nice once, that I could use multiple times in the future. Here's what a typical interaction would look like:
 
 ![find\_color](./figures/find_color.png)
 
+After running through the script, I identified the following lower and upper bounds of the objects in HSV colorspace
+(bear in mind that, in OpenCV, the default range for hue is from 0-180, scaled down by a factor of 2):
+
+```python
+th_nav = ((0,0,180), (50,50,256)),
+th_obs = ((0,0,1), (35,256,90)),
+th_roc = ((20,230,100), (30,256,230))
+```
+
+Refer to [perception.py](./code/perception.py) for where this information can be found.
+
+These thresholds were then applied in [img\_proc.py](./code/img_proc.py) as a class method under `ImageProcessor()`:
+
+```python
+def _threshold(self, img, thresh):
+    """
+    Applies color threshold to img.
+    Parameters:
+        img : image to apply color transform
+        thresh : (low, high) with each same depth and colorspace as image.
+    """
+    sel = cv2.inRange(img, thresh[0], thresh[1]).astype(np.bool)
+    return sel
+```
+
+I simply called opencv's native function rather than chaining numpy's comparison and logical operations, in order to have a more compact and efficient expression.
+
+### Visualization
+
+In perspective, the following diagram spatially represents the previously defined color thresholds (the diagram can be reproduced through [col\_viz.py](./code/col_viz.py)):
+![col\_viz](./figures/col_viz.png)
+
+This verify that there is no real overlap between the objects as far as color-features are concerned, thereby validating the approach.
+
 ## Image Processing Pipeline
 
-The perspective transform was simply adopted from the [notebook](./code/Rover_Project_Test_Notebook.ipynb); after some experimentation, it appeared that the numbers provided by the lecture seemed to yield a more accurate projection, so I reused the values in all subsequent experiments.
+Whereas the `ImageProcessor()` class in [the notebook](./code/Rover_Project_Test_Notebook.ipynb) differs slightly from the final version (to be discussed later), the relevant bits of the processing pipeline stayed mostly the same, so I'll simply go through the steps sequentially, as expressed in the notebook.
+
+### Perspective Transform
+
+Initially, the input image undergoes perspective transform from the camera's point of view to a bird's-eye view of the ground-plane projection, like [so](./code/img_proc.py#171):
+```python
+# in ImageProcessor.__init__()
+# self._M = cv2.getPerspectiveTransform(src, dst)
+# ...
+warped = cv2.warpPerspective(img, self._M, (w,h))# keep same size as input image
+```
+
+Essentially, this operation transforms the pixel-coordinates expressed in angular displacements in the camera's perspective and normalizes them so that the newfound coordinates preserve the relationships in *distance*, rather than relatioships in *angle*. This means that now the world coordinates are directly comparable to the pixel locations in the warped image! -- or, at least, given that the angle between the ground plane and the camera's pitch are consistent to the time of calibration.
+
+Here's what the warping process looks like:
+
+Camera Image             |  Warped Image (Mine) | Warped Image (Provided)
+:-------------------------:|:-------------------------:
+![a](./calibration_images/example_grid1.jpg)  |  ![b](./figures/warp_bad.png) | ![c](./figures/warp_good.png)
+
+After some experimentation, it appeared that the numbers provided by the lecture seemed to yield a more accurate projection, so I reused the values in all subsequent experiments.
+
+To put this in context, the following are the warp parameters in each of these cases:
+
+Source (Mine)| Source (Provided) | Destination
+:-----------:|:-----------------:|:--------:
+(119, 97.5)  |(118, 96)          |(155, 144)
+(199.5, 97.5)|(200, 96)          |(165, 144)
+(302, 141)   |(301, 140)         |(165, 154)
+(15, 141)    |(14, 140)          |(155, 154)
+
+Before realizing that these parameters were provided, I manually plotted each of these points; whereas the numbers seem quite similar, the results were quite different (especially for objects that were further away); this was a good example of how even a small difference in the input pixel coordinates can make a large difference in the transformed coordinates, such that a good calibration process was mandatory.
+
+After looking at these results, I reused the provided parameters (right) which seemed to yield a more reasonable projection (namely, the grid-lines were parallel)
+
+### Thresholding
+
+I have already extensively described the thresholding process in the previous section, so I won't labor the point too much. In short, here's how the image looks after thresholding for navigable terrain:
+
+![thresh](./figures/thresh.png)
+
+Note that the grid lines are *outside* of the threshold range, so that they are considered un-navigable. Fortunately, the grid lines are turned off during autonomous navigation, so that no such artifacts are visible! (Even if they did, it could be easily removed through calls like `cv2.dilate()`)
+
+### Coordinate Transforms
+
+After the navigable terrain is identified, the points of interest are identified through `np.where(img)` which returns the locations of non-zero entries as a pair of `(i,j)` coordinates. In order to use these points, we need to convert these coordinates into a frame that best represents where they really are.
+
+#### Rover Coordinates
+
+In the warped image, the rover's location is in the bottom-center, pointing upwards. In order to convert each of these points in the frame of the rover (complying wit hthe standard definition of x-forwards and y-left), we simply apply the following transformation:
+
+```python
+def _cvt_rover(self, pi, pj, h, w):
+    px, py = float(h)-pi, float(w/2.0)-pj
+    return px, py
+```
+
+All this means is that `+y=-j` and `+x=-i`, with the center offset of `(x0,y0)=(h,w/2)`. Quite simple!
+
+#### World Coordinates
+
+After this, it is straightforward to convert these coordinates in the `map` frame (or the world-coordinates) by accounting for the position and the yaw-angle of the rover:
+
+```python
+def _cvt_world(self, px, py, yaw, tx, ty, ww, wh):
+    yaw = np.deg2rad(yaw)
+    c, s = np.cos(yaw), np.sin(yaw)
+    rmat = np.reshape([c,-s,s,c], (2,2))
+    wx, wy = np.int32(np.add(np.dot(rmat, [px,py])/self._scale, [[tx],[ty]]))
+
+    wx = np.clip(wx, 0, ww)
+    wy = np.clip(wy, 0, wh)
+    return wx, wy
+```
+
+Note that the positions are scaled by `self._scale`, which is the scaling parameter that represents how many pixels represent a meter. When we were applying the perspective transformation, we were also implicitly accounting for this in the values of the warp destination coordinates, so it needs to be multiplied again. Essentially, this function implements a sequence of rotation, scaling and translation in order to bring the rover's coordinates into the world coordinates.
+
+### Demonstration
 
 Here's the [video](https://youtu.be/TxpBHgyOvME) that demonstrates the full pipeline; it shows the mosaic built by moviepy in the notebook.
 
@@ -59,7 +184,7 @@ When a good frontier is found, the FSM will issue the path-planner a goal, and f
 
 At any point during navigation, if the rover is stuck, the rover will perform a series of unstuck maneuvers that go through turning counterclockwise, going backwards, turning clockwise, and going forwards. This is not exactly elegant, but works somewhat well in practice.
 
-Note that there is no "terminal" state in the FSM; this is because there is no real need for the rover to stop, under the given constraints. In the current process, the rover will continue to roam the map forever in search of the rock samples.
+Note that there is no "terminal" state in the FSM; this is because there is no real need for the rover to stop, under the given constraints. In the current process, the rover will continue to roam the map forever in search of the rock samples. While it is possible to define a terminal state where the number of frontiers is zero (meaning that the exploration is complete), I decided not to risk falling into a situation -- especially in the beginning -- in which the rover temporarily gets stuck in a locally incorrect map with no frontiers, then believing to have completed the exploration. Any other solutions would have required knowledge of the actual map data in the decision-making pipeline, which I wanted to avoid altogether (since it is an intervention from an oracle, with access to ground-truth information).
 
 ### Exploration
 
@@ -105,7 +230,7 @@ As the rover autonomously navigated and explored the environment, I identified s
 
 In the current implementation, the local planner of the rover actually examines the *global* map, which can be problematic in real-world scenarios due to possible latency issues, localization errors, etc. While the local planner has range limits of approximately 6m, and a critical flaw that the projection cannot be trusted when the rover is not nearly flat to the ground plane, it would be nice to be able to integrate local maps to the local planner.
 
-In addition, at the moment the planner does not *revisit* idenfieid rock samples if the collection procedure failed; while the odds of this event is not high, it would be ideal if the global planner could be repurposed for two different objectives: exploration of the area (going to frontiers) and collection of rock samples (going to locations). While this would not be a huge modification to the current implementation, the task was not of high-priority, as the rate of failure in collection was fairly low.
+In addition, at the moment the planner does not *revisit* idenfied rock samples if the collection procedure failed; while the odds of this event is not high, it would be ideal if the global planner could be repurposed for two different objectives: exploration of the area (going to frontiers) and collection of rock samples (going to locations). While this would not be a huge modification to the current implementation, the task was not of high-priority, as the rate of failure in collection was fairly low.
 
 ## Appendix
 
